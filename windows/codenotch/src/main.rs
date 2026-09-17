@@ -20,6 +20,8 @@ mod activity;
 mod diag;
 mod watcher;
 mod settings_window;
+mod session_model;
+mod session_git;
 
 use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, Manager};
