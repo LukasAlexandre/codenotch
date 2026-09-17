@@ -32,6 +32,27 @@ const RENEW_COOLDOWN_MS: u64 = 10 * 60 * 1000;
 const RENEW_TIMEOUT_SECS: u64 = 30;
 const EXPIRED_NOTE: &str = "Credential expired — run claude once in a terminal to renew it";
 
+/// Upstream's `ClaudeUsageCLI.timeout` (ClaudeUsageCLI.swift:32): long enough for a cold Node
+/// start on a busy machine, short enough that a wedged process cannot hold a refresh open.
+const CLI_USAGE_TIMEOUT_SECS: u64 = 20;
+/// The CLI flags, matching upstream's `ClaudeUsageCLI.arguments` (ClaudeUsageCLI.swift:54).
+/// `--print` skips the interactive/workspace-trust prompt, `--no-session-persistence` (print-mode
+/// only) skips writing a transcript, and `--strict-mcp-config` with no `--mcp-config` starts no
+/// MCP server at all (upstream measured this keeps the process talking only to
+/// api.anthropic.com and Claude Code's own feature-gate host).
+///
+/// Deliberate divergence from upstream: Swift passes `/usage` as a fourth, trailing argv element
+/// with stdin nulled. On the Claude Code CLI actually installed here (2.1.267), that made `/usage`
+/// land as a literal chat prompt ("I notice this message is just a path with no actual request"),
+/// not the slash command — verified by hand before writing this parser, not assumed. Piping
+/// `/usage` over stdin instead (see `run_cli_usage`) reliably invokes the command and produces the
+/// exact `Current session: …` report. Argv-only is kept here as a documented fact, in case a
+/// future CLI version's behaviour changes back.
+const CLI_USAGE_ARGS: &[&str] = &["--print", "--no-session-persistence", "--strict-mcp-config"];
+/// Windows-side observability for T-CLAUDE-USAGE-01 (doctor/logs only, never the UI): which
+/// source fed the last Claude usage snapshot.
+static LAST_CLAUDE_SOURCE: std::sync::Mutex<Option<&'static str>> = std::sync::Mutex::new(None);
+
 static REFRESH: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// Immediate refresh from the tray or a command
@@ -148,14 +169,16 @@ pub fn probe_credentials() -> String {
         Some(p) => format!("renews via {}", p.display()),
         None => "no standalone claude CLI found to renew it".into(),
     };
-    match read_credentials() {
+    let source = LAST_CLAUDE_SOURCE.lock().unwrap().unwrap_or("none yet");
+    let base = match read_credentials() {
         Some(c) => format!(
             "credential: found (token {} chars, {}; {cli})",
             c.token.len(),
             if c.expired(now_ms()) { "expired" } else { "valid" }
         ),
         None => "credential: ~/.claude/.credentials.json not found (needsAuth; the desktop app may use another store — signing in once with the Claude Code CLI creates it)".into(),
-    }
+    };
+    format!("{base}\n  Claude usage source: {source}")
 }
 
 // ---------------- token renewal (upstream's ClaudeTokenRefresher) ----------------
@@ -189,6 +212,327 @@ fn find_cli() -> Option<std::path::PathBuf> {
         }
     }
     v.into_iter().find(|p| p.is_file() && !is_desktop_owned(p))
+}
+
+// ---------------- Claude Code CLI usage (T-CLAUDE-USAGE-01, upstream's ClaudeUsageCLI) ----------------
+//
+// Windows equivalent of macOS's `ClaudeOAuthProvider.fetchSnapshot()` priority order
+// (ClaudeOAuthProvider.swift:150-198): try `claude "/usage"` first — off the same credential the
+// CLI already holds, no keychain/token involved — and only fall back to the raw
+// `/api/oauth/usage` token endpoint if the CLI is absent or declines to answer. `desktopWindows()`
+// (the Claude Desktop cache reader) is explicitly out of scope for this task.
+//
+// Root cause this addresses: the token endpoint answers for whichever OAuth grant is in
+// `~/.claude/.credentials.json`, which is not necessarily the credential doing the account's real
+// work (e.g. a desktop-app-hosted session uses its own separate credential store — see
+// `is_desktop_owned`). `claude "/usage"` instead asks the CLI itself, which reports on its own
+// actual usage the same way the terminal command does.
+
+/// Reasons the CLI source did not produce a usage reading. Every variant means "fall back to the
+/// OAuth token path" — none of them is treated as "usage is 0%".
+#[derive(Debug)]
+enum CliUsageErr {
+    /// No standalone `claude` binary found.
+    NotFound,
+    /// The process exited non-zero: upstream's own reading of this is "declining to answer",
+    /// in practice meaning it has no login of its own.
+    NeedsAuth,
+    /// The process did not finish within `CLI_USAGE_TIMEOUT_SECS` and was killed.
+    Timeout,
+    /// Empty output, or output that did not contain a recognizable `Current session: NN% used`
+    /// line — never treated as a real reading, real or zero.
+    BadResponse,
+}
+
+/// `%APPDATA%\codenotch\usage-scratch` — one fixed directory, created once and reused across
+/// calls. Mirrors upstream's `ClaudeUsageCLI.scratchDirectory` (ClaudeUsageCLI.swift:65-75): a
+/// fresh temporary directory per call left a new, never-revisited project folder under
+/// `~/.claude/projects` on every poll (twelve an hour, indefinitely); one fixed directory means at
+/// most one, and `--no-session-persistence` above means none at all.
+fn cli_usage_scratch_dir() -> Option<std::path::PathBuf> {
+    let dir = dirs::config_dir()?.join("codenotch").join("usage-scratch");
+    std::fs::create_dir_all(&dir).ok()?;
+    Some(dir)
+}
+
+/// Runs `claude --print --no-session-persistence --strict-mcp-config /usage` hidden, with no
+/// window, no shell, and a hard timeout, returning its stdout text.
+///
+/// Safety properties (Fase 2 of the task): no window (`CREATE_NO_WINDOW`), argv passed as a plain
+/// array (no shell string, no injection surface), stdin is `/dev/null`-equivalent so the process
+/// can never wait on input that will never arrive, and the whole process tree is contained in a
+/// Windows Job Object so a `claude.cmd` → `node.exe` wrapper cannot leave an orphaned `node.exe`
+/// behind on timeout — the same concern `agy_cli.rs`'s bounded runner exists for. Unlike
+/// `agy_cli.rs`, no ConPTY is used: `claude --print` is designed for non-interactive capture (this
+/// is exactly what upstream's own `Process`+`Pipe` does on macOS, with no pseudo-terminal either),
+/// so a plain redirected pipe is sufficient and considerably simpler.
+#[cfg(windows)]
+fn run_cli_usage(cli: &std::path::Path, timeout: Duration) -> Result<String, CliUsageErr> {
+    use std::io::{Read, Write};
+    use std::os::windows::io::AsRawHandle;
+    use std::os::windows::process::CommandExt;
+    use std::process::{Command, Stdio};
+    use std::sync::mpsc::channel;
+    use windows::core::PCWSTR;
+    use windows::Win32::Foundation::{CloseHandle, HANDLE};
+    use windows::Win32::System::JobObjects::{
+        AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
+        SetInformationJobObject, TerminateJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+    };
+
+    if !cli.is_file() {
+        return Err(CliUsageErr::NotFound);
+    }
+    let scratch = cli_usage_scratch_dir().ok_or(CliUsageErr::BadResponse)?;
+
+    let mut child = Command::new(cli)
+        .args(CLI_USAGE_ARGS)
+        .current_dir(&scratch)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .creation_flags(0x0800_0000) // CREATE_NO_WINDOW
+        .spawn()
+        .map_err(|_| CliUsageErr::NotFound)?;
+
+    // `/usage` is the prompt itself, delivered over stdin rather than as a trailing argv element
+    // (see CLI_USAGE_ARGS for why) — never a real prompt/response, never anything from an actual
+    // session; this is the one fixed line every call sends. stdin is then closed by dropping the
+    // handle, so the process proceeds instead of waiting for more input.
+    if let Some(mut stdin) = child.stdin.take() {
+        let _ = stdin.write_all(b"/usage\n");
+    }
+
+    // Contained as a whole in a job object killed on timeout — a bare child.kill() only ends the
+    // immediate process and can orphan a Node process a .cmd shim spawned underneath it.
+    let job = unsafe { CreateJobObjectW(None, PCWSTR::null()) }.ok();
+    if let Some(job) = job {
+        unsafe {
+            let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+            limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+            let _ = SetInformationJobObject(
+                job,
+                JobObjectExtendedLimitInformation,
+                &limits as *const _ as *const _,
+                std::mem::size_of_val(&limits) as u32,
+            );
+            let _ = AssignProcessToJobObject(job, HANDLE(child.as_raw_handle() as *mut core::ffi::c_void));
+        }
+    }
+
+    // Draining stdout happens on its own thread: the read blocks until EOF, which arrives either
+    // because the process exited on its own or because the timeout below killed it — the two are
+    // never waited on in sequence, which is what would risk a deadlock on a full pipe buffer.
+    let mut stdout = child.stdout.take();
+    let (tx, rx) = channel();
+    let reader = std::thread::spawn(move || {
+        let mut buf = String::new();
+        if let Some(s) = stdout.as_mut() {
+            let _ = s.read_to_string(&mut buf);
+        }
+        let _ = tx.send(buf);
+    });
+
+    let deadline = std::time::Instant::now() + timeout;
+    let mut timed_out = false;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(s)) => break Some(s),
+            Ok(None) => {
+                if std::time::Instant::now() >= deadline {
+                    timed_out = true;
+                    if let Some(job) = job {
+                        unsafe {
+                            let _ = TerminateJobObject(job, 1);
+                        }
+                    }
+                    let _ = child.kill();
+                    break child.wait().ok();
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            Err(_) => break None,
+        }
+    };
+    let out = rx.recv_timeout(Duration::from_secs(2)).unwrap_or_default();
+    let _ = reader.join();
+    if let Some(job) = job {
+        unsafe {
+            let _ = CloseHandle(job);
+        }
+    }
+
+    if timed_out {
+        return Err(CliUsageErr::Timeout);
+    }
+    let Some(status) = status else {
+        return Err(CliUsageErr::BadResponse);
+    };
+    if !status.success() {
+        // Upstream's own reading of a non-zero exit (ClaudeUsageCLI.swift:223-230): Claude Code
+        // declining to answer, in practice meaning it has no login of its own — not an error
+        // worth surfacing, the caller falls back to the token path.
+        return Err(CliUsageErr::NeedsAuth);
+    }
+    if out.trim().is_empty() {
+        return Err(CliUsageErr::BadResponse);
+    }
+    Ok(out)
+}
+
+#[cfg(not(windows))]
+fn run_cli_usage(_cli: &std::path::Path, _timeout: Duration) -> Result<String, CliUsageErr> {
+    Err(CliUsageErr::NotFound)
+}
+
+/// `all models` -> `weekly_all`, `Opus` -> `weekly_opus`: the endpoint's own vocabulary, copied
+/// from upstream's `ClaudeUsageCLI.kind(forWeek:)` (ClaudeUsageCLI.swift:294-299), so
+/// `label_for` below can name both the same way regardless of which source produced the window.
+fn cli_week_kind(text: &str) -> String {
+    let lower = text.to_lowercase();
+    let name = if lower == "all models" { "all".to_string() } else { lower.replace(' ', "_") };
+    format!("weekly_{name}")
+}
+
+/// One `Current session: 38% used · resets Sep 7 at 2:59pm (Asia/Jakarta)` style line, upstream's
+/// exact wording (`ClaudeUsageCLI.line`, ClaudeUsageCLI.swift:247-250) parsed by hand instead of
+/// with a regex engine — the grammar is small and fixed, and a hand parser fails closed on
+/// anything unrecognized instead of silently matching too much.
+fn parse_cli_line(line: &str) -> Option<(String, f64, Option<String>)> {
+    let line = line.trim();
+    let rest = line.strip_prefix("Current ")?;
+    let (kind, after_kind) = if let Some(r) = rest.strip_prefix("session") {
+        ("session".to_string(), r)
+    } else if let Some(r) = rest.strip_prefix("week (") {
+        let close = r.find(')')?;
+        let label = &r[..close];
+        (cli_week_kind(label), &r[close + 1..])
+    } else {
+        return None;
+    };
+    let after_colon = after_kind.strip_prefix(':')?.trim_start();
+    let digit_end = after_colon.find(|c: char| !c.is_ascii_digit()).unwrap_or(after_colon.len());
+    if digit_end == 0 {
+        return None;
+    }
+    let percent: f64 = after_colon[..digit_end].parse().ok()?;
+    let after_pct = after_colon[digit_end..].trim_start().strip_prefix('%')?.trim_start();
+    let after_used = after_pct.strip_prefix("used")?.trim_start();
+    if after_used.is_empty() {
+        return Some((kind, percent, None));
+    }
+    let after_dot = after_used.strip_prefix('·')?.trim_start();
+    let reset_text = after_dot.strip_prefix("resets")?.trim();
+    if reset_text.is_empty() {
+        return Some((kind, percent, None));
+    }
+    Some((kind, percent, Some(reset_text.to_string())))
+}
+
+/// `Sep 17, 7:49am (America/Sao_Paulo)` -> a ms-epoch timestamp, adapted from upstream's
+/// `ClaudeUsageCLI.resetDate(from:now:)` (ClaudeUsageCLI.swift:307-348).
+///
+/// Known, deliberate simplification vs. upstream: the parenthesized IANA zone name is read only
+/// to be stripped off, then the wall-clock time is interpreted in the machine's own local
+/// timezone rather than resolved against a real timezone database (this crate has no `chrono-tz`
+/// dependency, and adding one for this alone was judged not worth it). In practice the zone
+/// Claude Code prints here already matches the machine's own — this only diverges from upstream
+/// if that ever stops being true.
+///
+/// Date/time separator: upstream's own doc comment (and its regex) says `"Sep 7 at 2:59pm"`, but
+/// the Claude Code CLI actually installed here (2.1.267) prints `"Sep 17, 7:49am"` — a comma, no
+/// `"at"` — verified against real `/usage` output, not assumed. Both separators are accepted so a
+/// future CLI version matching upstream's documented wording still parses.
+///
+/// No year is printed, so — exactly like upstream — the year is chosen as whichever of last year,
+/// this year or next year lands nearest to `now`.
+fn parse_cli_reset(text: &str, now: chrono::DateTime<chrono::Local>) -> Option<u64> {
+    use chrono::{Datelike, TimeZone};
+
+    let text = text.trim();
+    let stamp = match text.rfind('(') {
+        Some(open) if text.ends_with(')') => text[..open].trim(),
+        _ => text,
+    };
+    let (date_part, time_part) = stamp.split_once(" at ").or_else(|| stamp.split_once(", "))?;
+
+    let mut dp = date_part.split_whitespace();
+    let month_str = dp.next()?;
+    let day: u32 = dp.next()?.parse().ok()?;
+    const MONTHS: [&str; 12] =
+        ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
+    let month = MONTHS.iter().position(|m| m.eq_ignore_ascii_case(&month_str[..3.min(month_str.len())]))? as u32 + 1;
+
+    let tp = time_part.trim();
+    let (ampm, digits) = if let Some(d) = tp.strip_suffix("am").or_else(|| tp.strip_suffix("AM")) {
+        (false, d)
+    } else if let Some(d) = tp.strip_suffix("pm").or_else(|| tp.strip_suffix("PM")) {
+        (true, d)
+    } else {
+        return None;
+    };
+    let (hour12, minute) = match digits.split_once(':') {
+        Some((h, m)) => (h.parse::<u32>().ok()?, m.parse::<u32>().ok()?),
+        None => (digits.parse::<u32>().ok()?, 0),
+    };
+    if !(1..=12).contains(&hour12) || minute > 59 {
+        return None;
+    }
+    let hour24 = match (hour12, ampm) {
+        (12, false) => 0,  // 12am == midnight
+        (12, true) => 12,  // 12pm == noon
+        (h, false) => h,
+        (h, true) => h + 12,
+    };
+
+    let this_year = now.year();
+    [this_year - 1, this_year, this_year + 1]
+        .into_iter()
+        .filter_map(|year| {
+            let date = chrono::NaiveDate::from_ymd_opt(year, month, day)?;
+            let time = chrono::NaiveTime::from_hms_opt(hour24, minute, 0)?;
+            let naive = chrono::NaiveDateTime::new(date, time);
+            match chrono::Local.from_local_datetime(&naive) {
+                chrono::LocalResult::Single(dt) => Some(dt),
+                chrono::LocalResult::Ambiguous(dt, _) => Some(dt),
+                chrono::LocalResult::None => None,
+            }
+        })
+        .min_by_key(|dt| (dt.signed_duration_since(now)).num_seconds().abs())
+        .map(|dt| dt.timestamp_millis().max(0) as u64)
+}
+
+/// Turns `claude "/usage"`'s stdout into `LimitWindow`s. Fails closed: any line that is not the
+/// exact `Current session: NN% used [· resets ...]` shape (upstream's `ClaudeUsageCLI.line`) is
+/// silently skipped as prose, never coerced into a reading — and a report with no recognizable
+/// session line at all is rejected outright (upstream's own rule, ClaudeUsageCLI.swift:283-288:
+/// "without the session window there is no headline... better to fall back to the token path than
+/// to draw a ring with a hole in it").
+fn parse_cli_usage(text: &str) -> Result<Vec<LimitWindow>, CliUsageErr> {
+    let now = chrono::Local::now();
+    let mut out: Vec<LimitWindow> = Vec::new();
+    for line in text.lines() {
+        let Some((kind, percent, reset_text)) = parse_cli_line(line) else {
+            continue;
+        };
+        if out.iter().any(|w| w.id == kind) {
+            continue; // first occurrence wins, same as upstream
+        }
+        let resets_at = reset_text.and_then(|t| parse_cli_reset(&t, now));
+        out.push(LimitWindow {
+            id: kind.clone(),
+            label: label_for(&kind),
+            used: (percent / 100.0).clamp(0.0, 1.0),
+            resets_at,
+            ..Default::default()
+        });
+    }
+    if !out.iter().any(|w| w.id == "session") {
+        return Err(CliUsageErr::BadResponse);
+    }
+    out.sort_by_key(|w| if w.id == "session" { 0 } else { 1 });
+    Ok(out)
 }
 
 /// Whether a launch is worth making. Pure, so every branch is testable without a clock or a subprocess
@@ -416,6 +760,43 @@ pub fn start(app: AppHandle) {
         let mut consecutive_429: u32 = 0;
         let mut renewer = Renewer::default();
         loop {
+            // Ahead of the OAuth back-off on purpose, exactly like upstream's fetchSnapshot()
+            // (ClaudeOAuthProvider.swift:150-163): the CLI does not share the token endpoint's
+            // rate limit, so there is no reason for a 429 on one to darken a ring the other can
+            // still fill. When the CLI answers, this whole cycle is done — the OAuth path below
+            // (credential read, renewal, backoff, the token fetch itself) is skipped entirely, so
+            // a working CLI can never spend an OAuth attempt or touch its persisted backoff.
+            if let Some(cli) = find_cli() {
+                match run_cli_usage(&cli, Duration::from_secs(CLI_USAGE_TIMEOUT_SECS)).and_then(|text| parse_cli_usage(&text)) {
+                    Ok(windows) => {
+                        *LAST_CLAUDE_SOURCE.lock().unwrap() = Some("claude_cli");
+                        crate::applog(&format!("claude usage source: claude_cli ({} windows)", windows.len()));
+                        set_and_broadcast(&app, |u| {
+                            u.status = "ok".into();
+                            u.windows = windows;
+                            u.fetched_at = now_ms();
+                            u.note.clear();
+                            // backoff_until is deliberately left untouched: it is the OAuth
+                            // path's own state, and the CLI succeeding says nothing about
+                            // whether the token endpoint is still rate limited.
+                        });
+                        let active = {
+                            let st = app.state::<AppState>();
+                            let store = st.store.lock().unwrap();
+                            !store.snapshot("en", "en", false, false).sessions.is_empty()
+                        };
+                        sleep_interruptible(if active { POLL_ACTIVE_SECS } else { POLL_IDLE_SECS });
+                        continue;
+                    }
+                    Err(e) => {
+                        // NotFound/NeedsAuth/Timeout/BadResponse all mean the same thing here:
+                        // fall through to the OAuth path below, unchanged. Logged (no secret in
+                        // any of these variants) so a doctor/run.log read can tell why.
+                        crate::applog(&format!("claude usage: CLI source unavailable ({e:?}), falling back to OAuth"));
+                    }
+                }
+            }
+            *LAST_CLAUDE_SOURCE.lock().unwrap() = Some("oauth_endpoint");
             // Ahead of the back-off: renewing never touches the usage endpoint, and a fresh token deserves a fresh try
             if let Some(cred) = read_credentials() {
                 if renewer.maybe_renew(&cred) == Some(true) {
@@ -536,6 +917,226 @@ mod tests {
         assert_eq!(backoff_secs(0, 0), BACKOFF_BASE_SECS);
         assert_eq!(backoff_secs(1, 300), 300);
         assert_eq!(backoff_secs(9, 0), BACKOFF_CAP_SECS);
+    }
+
+    // ---------------- T-CLAUDE-USAGE-01: claude "/usage" text parsing ----------------
+
+    #[test]
+    fn cli_line_session_with_reset_parses() {
+        let (kind, pct, reset) =
+            parse_cli_line("Current session: 38% used · resets Sep 7 at 2:59pm (Asia/Jakarta)").unwrap();
+        assert_eq!(kind, "session");
+        assert_eq!(pct, 38.0);
+        assert_eq!(reset.as_deref(), Some("Sep 7 at 2:59pm (Asia/Jakarta)"));
+    }
+
+    #[test]
+    fn cli_line_weekly_all_models_parses() {
+        let (kind, pct, _) =
+            parse_cli_line("Current week (all models): 4% used · resets Sep 14 at 5:59am (Asia/Jakarta)").unwrap();
+        assert_eq!(kind, "weekly_all");
+        assert_eq!(pct, 4.0);
+    }
+
+    #[test]
+    fn cli_line_weekly_named_model_parses() {
+        let (kind, pct, reset) = parse_cli_line("Current week (Opus): 12% used").unwrap();
+        assert_eq!(kind, "weekly_opus");
+        assert_eq!(pct, 12.0);
+        assert!(reset.is_none(), "no resets clause present must not invent one");
+    }
+
+    #[test]
+    fn cli_line_percent_scale_is_preserved_not_rescaled() {
+        // 37 must become the fraction 0.37 exactly once — never 3700, never re-divided.
+        let (_, pct, _) = parse_cli_line("Current session: 37% used").unwrap();
+        assert_eq!(pct / 100.0, 0.37);
+    }
+
+    #[test]
+    fn cli_line_explicit_zero_percent_is_a_real_reading_not_a_rejection() {
+        let (kind, pct, _) = parse_cli_line("Current session: 0% used").unwrap();
+        assert_eq!(kind, "session");
+        assert_eq!(pct, 0.0);
+    }
+
+    #[test]
+    fn cli_line_unrecognized_text_is_none_not_zero() {
+        assert!(parse_cli_line("Estimated based on your recent usage.").is_none());
+        assert!(parse_cli_line("").is_none());
+        assert!(parse_cli_line("Current session used 38%").is_none(), "missing the colon shape must not fuzzy-match");
+    }
+
+    #[test]
+    fn cli_usage_full_valid_report_parses_both_windows_session_first() {
+        let text = "Some plan header\n\
+                     Current session: 38% used · resets Sep 7 at 2:59pm (Asia/Jakarta)\n\
+                     Current week (all models): 4% used · resets Sep 14 at 5:59am (Asia/Jakarta)\n\
+                     \n\
+                     This estimate is based on recent activity and may not be exact.\n";
+        let windows = parse_cli_usage(text).unwrap();
+        assert_eq!(windows.len(), 2);
+        assert_eq!(windows[0].id, "session");
+        assert_eq!(windows[0].used, 0.38);
+        assert_eq!(windows[1].id, "weekly_all");
+        assert_eq!(windows[1].used, 0.04);
+        assert!(windows[0].resets_at.is_some());
+    }
+
+    #[test]
+    fn cli_usage_session_only_report_has_no_weekly_window_not_a_zero_one() {
+        let text = "Current session: 12% used\n";
+        let windows = parse_cli_usage(text).unwrap();
+        assert_eq!(windows.len(), 1);
+        assert_eq!(windows[0].id, "session");
+        assert!(!windows.iter().any(|w| w.id.starts_with("weekly")), "absent weekly must not appear as 0%");
+    }
+
+    #[test]
+    fn cli_usage_without_a_session_line_is_rejected() {
+        let text = "Current week (all models): 4% used\n";
+        assert!(matches!(parse_cli_usage(text), Err(CliUsageErr::BadResponse)));
+    }
+
+    #[test]
+    fn cli_usage_unknown_format_is_rejected_not_read_as_zero() {
+        let text = "Claude Code v2.1.259\nSomething changed in the output format.\n";
+        assert!(matches!(parse_cli_usage(text), Err(CliUsageErr::BadResponse)));
+    }
+
+    #[test]
+    fn cli_usage_partial_garbled_output_does_not_crash() {
+        let text = "Current session: %% used\nCurrent week (\nrandom\x00binary\x01noise";
+        // Must not panic; garbled lines are simply skipped, and with no valid session line the
+        // whole report is rejected rather than partially trusted.
+        assert!(matches!(parse_cli_usage(text), Err(CliUsageErr::BadResponse)));
+    }
+
+    #[test]
+    fn cli_usage_duplicate_session_line_keeps_the_first() {
+        let text = "Current session: 10% used\nCurrent session: 90% used\n";
+        let windows = parse_cli_usage(text).unwrap();
+        assert_eq!(windows.len(), 1);
+        assert_eq!(windows[0].used, 0.10);
+    }
+
+    #[test]
+    fn cli_reset_with_minutes_parses_exact_time() {
+        use chrono::{Datelike, TimeZone, Timelike};
+        let now = chrono::Local.with_ymd_and_hms(2026, 9, 1, 12, 0, 0).unwrap();
+        let ms = parse_cli_reset("Sep 7 at 2:59pm (Asia/Jakarta)", now).unwrap();
+        let dt = chrono::Local.timestamp_millis_opt(ms as i64).unwrap();
+        assert_eq!(dt.month(), 9);
+        assert_eq!(dt.day(), 7);
+        assert_eq!(dt.hour(), 14);
+        assert_eq!(dt.minute(), 59);
+        assert_eq!(dt.year(), 2026, "must pick the year nearest `now`, not always the current one");
+    }
+
+    #[test]
+    fn cli_reset_real_cli_comma_format_parses() {
+        // The exact wording the installed Claude Code CLI (2.1.267) actually prints — verified by
+        // hand, not the " at " form upstream's own doc comment describes.
+        use chrono::{Datelike, TimeZone, Timelike};
+        let now = chrono::Local.with_ymd_and_hms(2026, 9, 17, 3, 0, 0).unwrap();
+        let ms = parse_cli_reset("Sep 17, 7:49am (America/Sao_Paulo)", now).unwrap();
+        let dt = chrono::Local.timestamp_millis_opt(ms as i64).unwrap();
+        assert_eq!(dt.month(), 9);
+        assert_eq!(dt.day(), 17);
+        assert_eq!(dt.hour(), 7);
+        assert_eq!(dt.minute(), 49);
+    }
+
+    #[test]
+    fn cli_usage_real_cli_output_shape_parses_correctly() {
+        // A trimmed-down real capture (percentages/format only) from this machine's own
+        // `claude --print --no-session-persistence --strict-mcp-config` with `/usage` on stdin.
+        let text = "You are currently using your subscription to power your Claude Code usage\n\n\
+                     Current session: 2% used · resets Sep 17, 7:49am (America/Sao_Paulo)\n\
+                     Current week (all models): 0% used · resets Sep 23, 10:59pm (America/Sao_Paulo)\n\n\
+                     What's contributing to your limits usage?\n";
+        let windows = parse_cli_usage(text).unwrap();
+        assert_eq!(windows.len(), 2);
+        assert_eq!(windows[0].id, "session");
+        assert_eq!(windows[0].used, 0.02);
+        assert_eq!(windows[1].id, "weekly_all");
+        assert_eq!(windows[1].used, 0.0, "an explicit 0% from the real CLI is still a valid reading");
+        assert!(windows[0].resets_at.is_some());
+        assert!(windows[1].resets_at.is_some());
+    }
+
+    #[test]
+    fn cli_reset_without_minutes_parses_on_the_hour() {
+        use chrono::{TimeZone, Timelike};
+        let now = chrono::Local.with_ymd_and_hms(2026, 9, 1, 12, 0, 0).unwrap();
+        let ms = parse_cli_reset("Sep 7 at 3pm (Asia/Jakarta)", now).unwrap();
+        let dt = chrono::Local.timestamp_millis_opt(ms as i64).unwrap();
+        assert_eq!(dt.hour(), 15);
+        assert_eq!(dt.minute(), 0);
+    }
+
+    #[test]
+    fn cli_reset_unparseable_text_is_none_not_a_guess() {
+        let now = chrono::Local::now();
+        assert!(parse_cli_reset("sometime soon", now).is_none());
+        assert!(parse_cli_reset("", now).is_none());
+    }
+
+    // ---------------- subprocess plumbing (mirrors agy_cli.rs's own test style) ----------------
+
+    #[cfg(windows)]
+    fn write_test_cmd(name: &str, body: &str) -> std::path::PathBuf {
+        let p = std::env::temp_dir().join(format!("codenotch-usagecli-{}-{name}.cmd", std::process::id()));
+        std::fs::write(&p, body).unwrap();
+        p
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn run_cli_usage_reports_not_found_for_a_missing_binary() {
+        let missing = std::path::PathBuf::from(r"C:\does\not\exist\claude.exe");
+        assert!(matches!(run_cli_usage(&missing, Duration::from_secs(5)), Err(CliUsageErr::NotFound)));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn run_cli_usage_treats_nonzero_exit_as_needs_auth() {
+        let script = write_test_cmd("nonzero", "@echo off\r\nexit /b 3\r\n");
+        let result = run_cli_usage(&script, Duration::from_secs(5));
+        let _ = std::fs::remove_file(&script);
+        assert!(matches!(result, Err(CliUsageErr::NeedsAuth)));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn run_cli_usage_captures_stdout_on_success() {
+        let script = write_test_cmd("valid", "@echo off\r\necho Current session: 37%% used\r\n");
+        let result = run_cli_usage(&script, Duration::from_secs(5));
+        let _ = std::fs::remove_file(&script);
+        let text = result.expect("script exits 0 with output");
+        assert!(text.contains("Current session: 37% used"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn run_cli_usage_kills_a_wedged_process_on_timeout() {
+        // ping to an address that will not answer, well past the timeout below.
+        let script = write_test_cmd("hang", "@echo off\r\nping -n 30 127.0.0.1 >nul\r\n");
+        let started = std::time::Instant::now();
+        let result = run_cli_usage(&script, Duration::from_millis(300));
+        let elapsed = started.elapsed();
+        let _ = std::fs::remove_file(&script);
+        assert!(matches!(result, Err(CliUsageErr::Timeout)));
+        assert!(elapsed < Duration::from_secs(10), "must not wait anywhere near the script's own 30s");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn run_cli_usage_empty_output_is_bad_response() {
+        let script = write_test_cmd("empty", "@echo off\r\n");
+        let result = run_cli_usage(&script, Duration::from_secs(5));
+        let _ = std::fs::remove_file(&script);
+        assert!(matches!(result, Err(CliUsageErr::BadResponse)));
     }
 
     #[test]
