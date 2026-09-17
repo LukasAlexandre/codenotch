@@ -15,6 +15,7 @@
 //! Reply (snake_case): { limits:[{kind,percent,resets_at}], five_hour:{utilization,resets_at}, seven_day:{...} }
 //! limits is the forward-compatible main shape; five_hour/seven_day are merged in as a fallback (a window that just rolled over disappears from limits).
 
+use crate::claude_account;
 use crate::AppState;
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -106,6 +107,13 @@ pub struct UsageSnapshot {
     pub note: String,
     #[serde(default)]
     pub backoff_until: u64,
+    /// The Claude account this snapshot's numbers belong to (`claude_account::ClaudeAccountStatus
+    /// ::fingerprint`), so a restart can tell "still the same account, safe to show as stale"
+    /// from "a different account, discard" — Ajuste 2. `#[serde(default)]` means an old
+    /// pre-T-CLAUDE-ACCOUNT-SWITCHER `usage.json` deserializes to `None` here, which
+    /// `usage::start()` treats as untrusted/legacy, never as "confirmed same account".
+    #[serde(default)]
+    pub account_fingerprint: Option<String>,
 }
 
 fn store_path() -> std::path::PathBuf {
@@ -191,7 +199,7 @@ fn is_desktop_owned(p: &std::path::Path) -> bool {
 }
 
 /// The standalone Claude Code command: its own installer's location first, then global npm/pnpm/Volta, then PATH
-fn find_cli() -> Option<std::path::PathBuf> {
+pub(crate) fn find_cli() -> Option<std::path::PathBuf> {
     let mut v = Vec::new();
     if let Some(h) = dirs::home_dir() {
         v.push(h.join(".local").join("bin").join("claude.exe"));
@@ -255,19 +263,46 @@ fn cli_usage_scratch_dir() -> Option<std::path::PathBuf> {
     Some(dir)
 }
 
-/// Runs `claude --print --no-session-persistence --strict-mcp-config /usage` hidden, with no
-/// window, no shell, and a hard timeout, returning its stdout text.
+/// Successful process exit (any status code — callers decide what a non-zero exit means for
+/// their own command) plus its captured stdout text.
+pub(crate) struct ClaudeProcOutput {
+    pub success: bool,
+    pub stdout: String,
+}
+
+/// Reasons `run_claude_subprocess` could not produce an output at all. Distinct from "the process
+/// ran and exited non-zero" (that is `ClaudeProcOutput.success = false`, a normal outcome).
+pub(crate) enum ClaudeProcErr {
+    NotFound,
+    Timeout,
+    /// The OS-level wait on the process itself failed (distinct from a timeout) — vanishingly
+    /// rare in practice, kept as its own variant only so callers can tell it apart from a normal
+    /// timeout if they ever need to.
+    WaitFailed,
+}
+
+/// Runs any `claude <args>` invocation hidden, with no window, no shell, and a hard timeout,
+/// returning its stdout text and exit status. Shared by every Claude CLI caller in this crate
+/// (`/usage` here, `auth status`/`auth login`/`auth logout` in `claude_account.rs`) — extracted
+/// from what was originally `run_cli_usage`'s own body (T-CLAUDE-USAGE-01) so the one proven,
+/// safety-reviewed mechanism is reused rather than re-implemented per caller.
 ///
-/// Safety properties (Fase 2 of the task): no window (`CREATE_NO_WINDOW`), argv passed as a plain
-/// array (no shell string, no injection surface), stdin is `/dev/null`-equivalent so the process
-/// can never wait on input that will never arrive, and the whole process tree is contained in a
-/// Windows Job Object so a `claude.cmd` → `node.exe` wrapper cannot leave an orphaned `node.exe`
-/// behind on timeout — the same concern `agy_cli.rs`'s bounded runner exists for. Unlike
-/// `agy_cli.rs`, no ConPTY is used: `claude --print` is designed for non-interactive capture (this
-/// is exactly what upstream's own `Process`+`Pipe` does on macOS, with no pseudo-terminal either),
-/// so a plain redirected pipe is sufficient and considerably simpler.
+/// Safety properties: no window (`CREATE_NO_WINDOW`), argv passed as a plain array (no shell
+/// string, no injection surface), stdin is either closed immediately or fed exactly the caller's
+/// bytes (never a real prompt/response, never anything from an actual session), and the whole
+/// process tree is contained in a Windows Job Object so a `claude.cmd` → `node.exe` wrapper
+/// cannot leave an orphaned `node.exe` behind on timeout — the same concern `agy_cli.rs`'s
+/// bounded runner exists for. No ConPTY: `claude --print`/`claude auth ...` are designed for
+/// non-interactive capture (this is exactly what upstream's own `Process`+`Pipe` does on macOS,
+/// with no pseudo-terminal either), so a plain redirected pipe is sufficient and simpler.
 #[cfg(windows)]
-fn run_cli_usage(cli: &std::path::Path, timeout: Duration) -> Result<String, CliUsageErr> {
+pub(crate) fn run_claude_subprocess(
+    cli: &std::path::Path,
+    args: &[&str],
+    stdin_data: Option<&[u8]>,
+    cwd: &std::path::Path,
+    timeout: Duration,
+) -> Result<ClaudeProcOutput, ClaudeProcErr> {
     use std::io::{Read, Write};
     use std::os::windows::io::AsRawHandle;
     use std::os::windows::process::CommandExt;
@@ -282,26 +317,30 @@ fn run_cli_usage(cli: &std::path::Path, timeout: Duration) -> Result<String, Cli
     };
 
     if !cli.is_file() {
-        return Err(CliUsageErr::NotFound);
+        return Err(ClaudeProcErr::NotFound);
     }
-    let scratch = cli_usage_scratch_dir().ok_or(CliUsageErr::BadResponse)?;
 
     let mut child = Command::new(cli)
-        .args(CLI_USAGE_ARGS)
-        .current_dir(&scratch)
+        .args(args)
+        .current_dir(cwd)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .creation_flags(0x0800_0000) // CREATE_NO_WINDOW
         .spawn()
-        .map_err(|_| CliUsageErr::NotFound)?;
+        .map_err(|_| ClaudeProcErr::NotFound)?;
+    // Observability for every Claude CLI subprocess (Fase 14): args are just flags (e.g.
+    // "auth login"), never a token/URL/code — safe to log in full.
+    crate::applog(&format!("claude subprocess: spawned pid={:?} args={}", child.id(), args.join(" ")));
 
-    // `/usage` is the prompt itself, delivered over stdin rather than as a trailing argv element
-    // (see CLI_USAGE_ARGS for why) — never a real prompt/response, never anything from an actual
-    // session; this is the one fixed line every call sends. stdin is then closed by dropping the
-    // handle, so the process proceeds instead of waiting for more input.
+    // Fixed, caller-supplied bytes only — never a real prompt/response, never anything from an
+    // actual session. stdin is then closed by dropping the handle, so the process proceeds
+    // instead of waiting for more input.
     if let Some(mut stdin) = child.stdin.take() {
-        let _ = stdin.write_all(b"/usage\n");
+        if let Some(data) = stdin_data {
+            let _ = stdin.write_all(data);
+        }
+        // dropping `stdin` here closes the handle even when `stdin_data` is None
     }
 
     // Contained as a whole in a job object killed on timeout — a bare child.kill() only ends the
@@ -363,27 +402,56 @@ fn run_cli_usage(cli: &std::path::Path, timeout: Duration) -> Result<String, Cli
         }
     }
 
+    // Length only, never the stdout content itself (an OAuth authorize URL or a paste-code
+    // prompt can be in there) — this is what caught the Switch-account deadlock live.
+    crate::applog(&format!(
+        "claude subprocess: finished timed_out={timed_out} stdout_len={} exit_success={:?}",
+        out.len(),
+        status.map(|s| s.success())
+    ));
     if timed_out {
-        return Err(CliUsageErr::Timeout);
+        return Err(ClaudeProcErr::Timeout);
     }
     let Some(status) = status else {
-        return Err(CliUsageErr::BadResponse);
+        return Err(ClaudeProcErr::WaitFailed);
     };
-    if !status.success() {
+    Ok(ClaudeProcOutput { success: status.success(), stdout: out })
+}
+
+#[cfg(not(windows))]
+pub(crate) fn run_claude_subprocess(
+    _cli: &std::path::Path,
+    _args: &[&str],
+    _stdin_data: Option<&[u8]>,
+    _cwd: &std::path::Path,
+    _timeout: Duration,
+) -> Result<ClaudeProcOutput, ClaudeProcErr> {
+    Err(ClaudeProcErr::NotFound)
+}
+
+/// `claude --print --no-session-persistence --strict-mcp-config` with `/usage` on stdin, via
+/// `run_claude_subprocess`. Behaviour unchanged from before the T002 refactor: the same three
+/// outcomes (not found / timeout / bad-or-declined response) map to the same `CliUsageErr`
+/// variants — this function only re-expresses `run_cli_usage`'s old body in terms of the shared
+/// runner, it does not change what `/usage` does.
+fn run_cli_usage(cli: &std::path::Path, timeout: Duration) -> Result<String, CliUsageErr> {
+    let scratch = cli_usage_scratch_dir().ok_or(CliUsageErr::BadResponse)?;
+    let out = run_claude_subprocess(cli, CLI_USAGE_ARGS, Some(b"/usage\n"), &scratch, timeout)
+        .map_err(|e| match e {
+            ClaudeProcErr::NotFound => CliUsageErr::NotFound,
+            ClaudeProcErr::Timeout => CliUsageErr::Timeout,
+            ClaudeProcErr::WaitFailed => CliUsageErr::BadResponse,
+        })?;
+    if !out.success {
         // Upstream's own reading of a non-zero exit (ClaudeUsageCLI.swift:223-230): Claude Code
         // declining to answer, in practice meaning it has no login of its own — not an error
         // worth surfacing, the caller falls back to the token path.
         return Err(CliUsageErr::NeedsAuth);
     }
-    if out.trim().is_empty() {
+    if out.stdout.trim().is_empty() {
         return Err(CliUsageErr::BadResponse);
     }
-    Ok(out)
-}
-
-#[cfg(not(windows))]
-fn run_cli_usage(_cli: &std::path::Path, _timeout: Duration) -> Result<String, CliUsageErr> {
-    Err(CliUsageErr::NotFound)
+    Ok(out.stdout)
 }
 
 /// `all models` -> `weekly_all`, `Opus` -> `weekly_opus`: the endpoint's own vocabulary, copied
@@ -751,31 +819,86 @@ fn set_and_broadcast(app: &AppHandle, mutate: impl FnOnce(&mut UsageSnapshot)) {
 
 pub fn start(app: AppHandle) {
     std::thread::spawn(move || {
-        // Broadcast the persisted old reading at startup (stale beats blank)
+        // Ajuste 2: validate (or discard) the persisted reading's account binding BEFORE ever
+        // showing it — "stale beats blank" must never mean "the wrong account's numbers beat
+        // blank". A persisted snapshot with no fingerprint at all (pre-T-CLAUDE-ACCOUNT-SWITCHER,
+        // legacy) is always untrusted; one with a fingerprint is kept only if it equals the
+        // account this first check actually finds. If the account cannot be resolved at all right
+        // now (no CLI, or the call fails), that also counts as "not confirmed" — startup is the
+        // one place this stays strict, unlike the steady-state check further down.
         {
+            let persisted_fp = app.state::<AppState>().usage.lock().unwrap().account_fingerprint.clone();
+            let current = find_cli()
+                .and_then(|cli| claude_account::run_status(&cli, Duration::from_secs(claude_account::AUTH_STATUS_TIMEOUT_SECS)).ok());
+            if let Some(status) = current.clone() {
+                crate::applog(&format!("claude account: {:?}", status.state));
+                crate::set_claude_account(&app, status);
+            }
+            let current_fp = current.and_then(|s| s.fingerprint);
+            let trusted = matches!((&persisted_fp, &current_fp), (Some(p), Some(c)) if p == c);
             let st = app.state::<AppState>();
-            let snap = st.usage.lock().unwrap().clone();
+            let mut u = st.usage.lock().unwrap();
+            if trusted {
+                u.account_fingerprint = current_fp;
+            } else {
+                if !u.windows.is_empty() {
+                    crate::applog("claude usage: discarding persisted snapshot (no confirmed account match at startup)");
+                }
+                u.windows.clear();
+                u.status = "stale".into();
+                u.account_fingerprint = current_fp;
+            }
+            let snap = u.clone();
+            drop(u);
             let _ = app.emit("usage", &snap);
         }
         let mut consecutive_429: u32 = 0;
         let mut renewer = Renewer::default();
         loop {
+            // Account identity check, every cycle, ahead of everything else: detects
+            // ACTIVE ACCOUNT CHANGED before either usage source below is asked to interpret new
+            // numbers under the old account's fingerprint (Fase 3/4). Resolved once and reused
+            // for the `/usage` attempt right after, so this never doubles the CLI lookup cost.
+            let cli = find_cli();
+            if let Some(cli) = cli.as_deref() {
+                if let Ok(status) = claude_account::run_status(cli, Duration::from_secs(claude_account::AUTH_STATUS_TIMEOUT_SECS)) {
+                    let (changed, state_changed) = {
+                        let st = app.state::<AppState>();
+                        let prev = st.claude_account.lock().unwrap();
+                        (prev.fingerprint != status.fingerprint, prev.state != status.state)
+                    };
+                    if changed {
+                        crate::applog("claude account changed");
+                        set_and_broadcast(&app, |u| {
+                            u.windows.clear();
+                            u.status = "stale".into();
+                            u.account_fingerprint = status.fingerprint.clone();
+                        });
+                        crate::applog("claude usage refresh after account change");
+                    } else if state_changed {
+                        crate::applog(&format!("claude account: {:?}", status.state));
+                    }
+                    crate::set_claude_account(&app, status);
+                }
+            }
             // Ahead of the OAuth back-off on purpose, exactly like upstream's fetchSnapshot()
             // (ClaudeOAuthProvider.swift:150-163): the CLI does not share the token endpoint's
             // rate limit, so there is no reason for a 429 on one to darken a ring the other can
             // still fill. When the CLI answers, this whole cycle is done — the OAuth path below
             // (credential read, renewal, backoff, the token fetch itself) is skipped entirely, so
             // a working CLI can never spend an OAuth attempt or touch its persisted backoff.
-            if let Some(cli) = find_cli() {
-                match run_cli_usage(&cli, Duration::from_secs(CLI_USAGE_TIMEOUT_SECS)).and_then(|text| parse_cli_usage(&text)) {
+            if let Some(cli) = cli.as_deref() {
+                match run_cli_usage(cli, Duration::from_secs(CLI_USAGE_TIMEOUT_SECS)).and_then(|text| parse_cli_usage(&text)) {
                     Ok(windows) => {
                         *LAST_CLAUDE_SOURCE.lock().unwrap() = Some("claude_cli");
                         crate::applog(&format!("claude usage source: claude_cli ({} windows)", windows.len()));
+                        let fp = app.state::<AppState>().claude_account.lock().unwrap().fingerprint.clone();
                         set_and_broadcast(&app, |u| {
                             u.status = "ok".into();
                             u.windows = windows;
                             u.fetched_at = now_ms();
                             u.note.clear();
+                            u.account_fingerprint = fp;
                             // backoff_until is deliberately left untouched: it is the OAuth
                             // path's own state, and the CLI succeeding says nothing about
                             // whether the token endpoint is still rate limited.
