@@ -7,6 +7,7 @@ mod focus;
 mod hooks_install;
 mod i18n;
 mod server;
+mod session_usage;
 mod state;
 mod tray;
 mod usage;
@@ -1606,5 +1607,35 @@ mod tests {
     fn a_request_count_still_leads_when_it_is_all_there_is() {
         let requests = LimitWindow { id: "requests".into(), count: Some(79), ..Default::default() };
         assert_eq!(pick("gemini", std::slice::from_ref(&requests)), Some("requests"));
+    }
+
+    /// Structural smoke test for the Claude Usage popup's new blocks (T-CLAUDE-USAGE-SESSIONS-01).
+    /// This is not a real render test — ui/notch.html is plain embedded JS with no build step and
+    /// no JS test runner exists in this repo (checked: no package.json, no *.test.* file anywhere
+    /// under windows/). Adding one would be a build-tooling change well outside this feature's
+    /// scope, so this only locks in that the markup/functions the backend data model depends on
+    /// are present, catching an accidental deletion — not a substitute for the manual verification
+    /// the audit report calls out as still needed.
+    #[test]
+    fn notch_html_has_the_account_and_sessions_blocks() {
+        let html = include_str!("../ui/notch.html");
+        for marker in [
+            "class=\"acc-summary\"",      // always-visible Claude Account block
+            "function accountSummaryHtml",
+            "class=\"c-sessions-list\"",  // scrollable Local active sessions list
+            "class=\"s-card\"",
+            "function sessionCardHtml",
+            "Local active sessions",
+            "input_tokens",
+            "output_tokens",
+            "cache_write_tokens",
+            "cache_read_tokens",
+        ] {
+            assert!(html.contains(marker), "notch.html is missing expected marker: {marker}");
+        }
+        // Rule 3 of the hardening pass: no dollar cost anywhere in this feature's UI.
+        let lower = html.to_lowercase();
+        assert!(!lower.contains("cost_usd"), "cost_usd must not reappear in notch.html");
+        assert!(!lower.contains("fmtcost"), "fmtCost must not reappear in notch.html");
     }
 }
