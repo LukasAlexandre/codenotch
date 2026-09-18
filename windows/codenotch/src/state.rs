@@ -49,9 +49,9 @@ pub struct Session {
     pub cache_write_tokens: u64,
     pub cache_read_tokens: u64,
     /// Whether any event for this session has ever carried a transcript path — independent of
-    /// whether that transcript has parseable usage data yet (see `usage_available`). Diagnostic
-    /// signal (also served by server.rs's /debug/state) for telling "no transcript known" apart
-    /// from "transcript known, just hasn't produced usage lines yet".
+    /// whether that transcript has parseable usage data yet (see `usage_available`). Lets the UI
+    /// tell "no transcript known" apart from "transcript known, just hasn't produced usage lines
+    /// yet" instead of collapsing both into a guessed zero.
     pub has_transcript_path: bool,
     /// Whether `session_usage::compute_usage_totals` has ever returned `Some` for this session —
     /// i.e. the token fields above reflect a real scan, not just their zero default.
