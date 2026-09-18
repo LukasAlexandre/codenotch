@@ -14,7 +14,7 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
     let icon = tauri::image::Image::from_bytes(include_bytes!("../icons/tray-color.png"))?;
     TrayIconBuilder::with_id("main")
         .icon(icon)
-        .tooltip(concat!("Codenotch v", env!("CARGO_PKG_VERSION")))
+        .tooltip(concat!("MC-IA v", env!("CARGO_PKG_VERSION")))
         .menu(&menu)
         .show_menu_on_left_click(true)
         .on_menu_event(|app, ev| handle(app, ev.id().as_ref()))

@@ -2,7 +2,7 @@
 <html>
 <head>
 <meta charset="UTF-8">
-<title>Codenotch Settings</title>
+<title>MC-IA Settings</title>
 <style>
   /* The Mac's Settings (Sources/Settings/SettingsView.swift) over Windows 11's Mica: a sidebar card
      darker than the pane, grouped sections with captions as rows, and Windows' own control cues —
@@ -123,7 +123,7 @@
     <button class="row" id="tab-appearance" role="tab" aria-controls="pane-appearance" aria-selected="false" tabindex="-1"><span class="badge b-indigo"><svg viewBox="0 0 12 12"><path d="M10 .9a.8.8 0 0 1 1.1 1.1L6.4 6.7 5.3 5.6zM4.6 6.3l1.1 1.1c.2 1.9-1.9 3.6-4.7 3.1.9-.4 1.2-1 1.3-1.8.1-1.3 1.1-2.3 2.3-2.4z"/></svg></span><span>Appearance</span></button>
     <button class="row" id="tab-general" role="tab" aria-controls="pane-general" aria-selected="false" tabindex="-1"><span class="badge b-gray"><svg viewBox="0 0 12 12"><path fill-rule="evenodd" d="M5.1.6h1.8l.3 1.5 1.1.5 1.3-.8 1.3 1.3-.8 1.3.5 1.1 1.5.3v1.8l-1.5.3-.5 1.1.8 1.3-1.3 1.3-1.3-.8-1.1.5-.3 1.5H5.1l-.3-1.5-1.1-.5-1.3.8-1.3-1.3.8-1.3-.5-1.1L.6 6.9V5.1l1.5-.3.5-1.1-.8-1.3 1.3-1.3 1.3.8 1.1-.5zM6 4.1a1.9 1.9 0 1 0 0 3.8 1.9 1.9 0 0 0 0-3.8z"/></svg></span><span>General</span></button>
     <div class="grow" data-tauri-drag-region></div>
-    <button class="row" id="quit"><span class="badge b-red"><svg viewBox="0 0 12 12"><path d="M6 1.2v4.3" stroke="#fff" stroke-width="1.5" stroke-linecap="round" fill="none"/><path d="M3.4 3.1a3.9 3.9 0 1 0 5.2 0" stroke="#fff" stroke-width="1.5" stroke-linecap="round" fill="none"/></svg></span><span>Quit Codenotch</span></button>
+    <button class="row" id="quit"><span class="badge b-red"><svg viewBox="0 0 12 12"><path d="M6 1.2v4.3" stroke="#fff" stroke-width="1.5" stroke-linecap="round" fill="none"/><path d="M3.4 3.1a3.9 3.9 0 1 0 5.2 0" stroke="#fff" stroke-width="1.5" stroke-linecap="round" fill="none"/></svg></span><span>Quit MC-IA</span></button>
   </nav>
 
   <main id="pane">
@@ -170,19 +170,19 @@
               <option value="uk">Українська</option>
             </select>
           </div>
-          <div class="item cap">Sets the language used by Codenotch. “Follow system” uses the language Windows itself is set to.</div>
+          <div class="item cap">Sets the language used by MC-IA. “Follow system” uses the language Windows itself is set to.</div>
         </div>
       </section>
 
       <section class="pane" id="pane-general" role="tabpanel" aria-labelledby="tab-general" hidden>
         <div class="group">
-          <div class="item"><span>Open Codenotch at login</span><button class="switch" id="sw-autostart" role="switch" aria-checked="false" aria-label="Open Codenotch at login"></button></div>
-          <div class="item cap">Codenotch opens by itself every time you sign in to this computer, and waits quietly in the background until a coding session starts. Turn it off and you have to open Codenotch yourself.</div>
+          <div class="item"><span>Open MC-IA at login</span><button class="switch" id="sw-autostart" role="switch" aria-checked="false" aria-label="Open MC-IA at login"></button></div>
+          <div class="item cap">MC-IA opens by itself every time you sign in to this computer, and waits quietly in the background until a coding session starts. Turn it off and you have to open MC-IA yourself.</div>
           <div class="item"><span>Version</span><span class="value" id="about-version" data-dynamic>0.3.0</span></div>
         </div>
         <div class="group">
           <div class="item"><span>Data folder</span><button class="btn" id="btn-data">Open folder</button></div>
-          <div class="item cap">Everything Codenotch remembers lives in one folder: your settings, its log file, and the "glyphs" folder where you can drop your own icons. Opens in File Explorer.</div>
+          <div class="item cap">Everything MC-IA remembers lives in one folder: your settings, its log file, and the "glyphs" folder where you can drop your own icons. Opens in File Explorer.</div>
         </div>
         <div class="group">
           <div class="item cap"><span>App designed and developed by</span> <button class="link" id="author">@hivinz_</button></div>
@@ -196,7 +196,7 @@
 
 <script>
 /* ---------------------------------------------------------------------------
-   Codenotch settings: the Mac's three panes — Accounts, Appearance, General.
+   MC-IA settings: the Mac's three panes — Accounts, Appearance, General.
 
    Every value on screen comes from a Rust command and is written back by one.
    Every call is wrapped so a failure paints the strip under the title instead
@@ -225,15 +225,15 @@ function esc(s){
    rewording any string here means changing its key in every table. */
 const RU_STATIC = {
   'Settings sections':'Разделы настроек', 'Close':'Закрыть',
-  'Accounts':'Аккаунты', 'Appearance':'Внешний вид', 'General':'Общие', 'Quit Codenotch':'Выйти из Codenotch',
+  'Accounts':'Аккаунты', 'Appearance':'Внешний вид', 'General':'Общие', 'Quit MC-IA':'Выйти из MC-IA',
   'Connected':'Подключён', 'Not connected':'Не подключён',
   'These have no ring to place. Switch one on and it joins the end of the list above.':'У этих провайдеров нет кольца. Включите один, и он добавится в конец списка выше.',
   'One provider always stays ticked, so the pill is never empty.':'Хотя бы один провайдер всегда выбран, поэтому панель не бывает пустой.',
   'At least one provider stays on the notch':'На панели должен остаться хотя бы один провайдер',
   'Notch reads':'Показания панели', 'Model data':'Данные модели', 'Automatic':'Автоматически', '5-Hour Limit':'Лимит на 5 часов', 'Weekly Limit':'Недельный лимит',
   'Gemini Models':'Модели Gemini', 'Claude and GPT models':'Модели Claude и GPT',
-  'Let Claude Code notify Codenotch':'Разрешить Claude Code уведомлять Codenotch',
-  'Turning this on adds a few lines to your Claude Code settings file so that Claude Code sends Codenotch a short message when a session starts, when it is working, when it is waiting for your answer, and when it finishes. That is what makes the ring spin and the amber ring pulse.':'При включении в файл настроек Claude Code добавляются строки, чтобы он сообщал Codenotch о начале работы, процессе, ожидании ответа и завершении сеанса. Благодаря этому кольцо вращается, а янтарное кольцо пульсирует.',
+  'Let Claude Code notify MC-IA':'Разрешить Claude Code уведомлять MC-IA',
+  'Turning this on adds a few lines to your Claude Code settings file so that Claude Code sends MC-IA a short message when a session starts, when it is working, when it is waiting for your answer, and when it finishes. That is what makes the ring spin and the amber ring pulse.':'При включении в файл настроек Claude Code добавляются строки, чтобы он сообщал MC-IA о начале работы, процессе, ожидании ответа и завершении сеанса. Благодаря этому кольцо вращается, а янтарное кольцо пульсирует.',
   'Notch':'Панель', 'Show':'Показывать', 'Always show':'Всегда показывать', 'Hide':'Скрыть',
   'Size':'Размер', 'Small':'Маленький', 'Medium':'Средний', 'Large':'Большой',
   'Takes the least room on the edge. Readable, but not from across the desk.':'Занимает минимум места у края. Читается вблизи, но не издалека.',
@@ -244,21 +244,21 @@ const RU_STATIC = {
   'A thinner ring for the weekly limit, drawn inside the main one. It shares the gap with the working indicator.':'Тонкое кольцо недельного лимита внутри основного. Оно делит зазор с индикатором работы.',
   'A thinner ring for the weekly limit, drawn around the main one, in the margin between the ring and the notch edge.':'Тонкое кольцо недельного лимита вокруг основного, в промежутке между кольцом и краем панели.',
   'The notch stays open with every reading visible.':'Выемка остаётся открытой, и все данные видны.',
-  'The black pill against the right-hand edge of the screen, with one ring per tool. Turn it off and the pill disappears; Codenotch keeps counting your usage either way.':'Чёрная панель у правого края экрана с отдельным кольцом для каждого инструмента. При выключении панель исчезает, но Codenotch продолжает считать использование.',
+  'The black pill against the right-hand edge of the screen, with one ring per tool. Turn it off and the pill disappears; MC-IA keeps counting your usage either way.':'Чёрная панель у правого края экрана с отдельным кольцом для каждого инструмента. При выключении панель исчезает, но MC-IA продолжает считать использование.',
   'Recentre':'По центру',
   'The pill can be dragged up and down the right-hand edge. If it has ended up somewhere you cannot see it — off the bottom of a screen you have unplugged, say — this drops it back into the middle of the edge.':'Панель можно перетаскивать вверх и вниз вдоль правого края. Если она оказалась за пределами экрана, эта кнопка возвращает её в середину края.',
   'The notch is back in the middle':'Панель возвращена в центр',
   'App':'Приложение', 'App icon':'Значок приложения', 'System tray':'Системный трей', 'Neither':'Ни то ни другое',
-  'The small icon down by the clock. Right-clicking it opens this window, refreshes the readings, or quits Codenotch.':'Небольшой значок рядом с часами. Щелчок правой кнопкой открывает это окно, обновляет данные или завершает работу Codenotch.',
-  'No icon in the system tray. Open Codenotch again from the Start menu to bring these settings back.':'Значка в системном трее нет. Откройте Codenotch снова из меню «Пуск», чтобы вернуть эти настройки.',
-  'Held on: the notch is hidden, so this icon is the only way left to reach Codenotch. Switch the notch back on first if you want to hide it.':'Оставлен включённым: панель скрыта, поэтому этот значок — единственный способ открыть Codenotch. Сначала включите панель, если хотите скрыть значок.',
-  'The taskbar icon has been kept on. With the notch hidden it is the only way left to open this window or to quit Codenotch, so Codenotch will not let both of them be switched off at the same time.':'Значок в панели задач оставлен включённым. При скрытой панели это единственный способ открыть окно или завершить работу Codenotch, поэтому оба элемента нельзя выключить одновременно.',
+  'The small icon down by the clock. Right-clicking it opens this window, refreshes the readings, or quits MC-IA.':'Небольшой значок рядом с часами. Щелчок правой кнопкой открывает это окно, обновляет данные или завершает работу MC-IA.',
+  'No icon in the system tray. Open MC-IA again from the Start menu to bring these settings back.':'Значка в системном трее нет. Откройте MC-IA снова из меню «Пуск», чтобы вернуть эти настройки.',
+  'Held on: the notch is hidden, so this icon is the only way left to reach MC-IA. Switch the notch back on first if you want to hide it.':'Оставлен включённым: панель скрыта, поэтому этот значок — единственный способ открыть MC-IA. Сначала включите панель, если хотите скрыть значок.',
+  'The taskbar icon has been kept on. With the notch hidden it is the only way left to open this window or to quit MC-IA, so MC-IA will not let both of them be switched off at the same time.':'Значок в панели задач оставлен включённым. При скрытой панели это единственный способ открыть окно или завершить работу MC-IA, поэтому оба элемента нельзя выключить одновременно.',
   'Language':'Язык', 'Follow system':'Как в системе', 'English':'English', 'Русский':'Русский',
-  'Sets the language used by Codenotch. “Follow system” uses the language Windows itself is set to.':'Задаёт язык Codenotch. Вариант «Как в системе» использует язык Windows.',
-  'Open Codenotch at login':'Открывать Codenotch при входе',
-  'Codenotch opens by itself every time you sign in to this computer, and waits quietly in the background until a coding session starts. Turn it off and you have to open Codenotch yourself.':'Codenotch запускается при входе в систему и тихо работает в фоне до начала сеанса разработки. Если выключить эту настройку, Codenotch нужно запускать вручную.',
+  'Sets the language used by MC-IA. “Follow system” uses the language Windows itself is set to.':'Задаёт язык MC-IA. Вариант «Как в системе» использует язык Windows.',
+  'Open MC-IA at login':'Открывать MC-IA при входе',
+  'MC-IA opens by itself every time you sign in to this computer, and waits quietly in the background until a coding session starts. Turn it off and you have to open MC-IA yourself.':'MC-IA запускается при входе в систему и тихо работает в фоне до начала сеанса разработки. Если выключить эту настройку, MC-IA нужно запускать вручную.',
   'Version':'Версия', 'Data folder':'Папка данных', 'Open folder':'Открыть папку',
-  'Everything Codenotch remembers lives in one folder: your settings, its log file, and the "glyphs" folder where you can drop your own icons. Opens in File Explorer.':'Все данные Codenotch хранятся в одной папке: настройки, журнал и папка «glyphs» для собственных значков. Открывается в Проводнике.',
+  'Everything MC-IA remembers lives in one folder: your settings, its log file, and the "glyphs" folder where you can drop your own icons. Opens in File Explorer.':'Все данные MC-IA хранятся в одной папке: настройки, журнал и папка «glyphs» для собственных значков. Открывается в Проводнике.',
   'App designed and developed by':'Приложение разработал', 'Saved':'Сохранено'
 };
 const ZH_STATIC = {
@@ -266,7 +266,7 @@ const ZH_STATIC = {
   'Accounts':'账号',
   'Appearance':'外观',
   'General':'通用',
-  'Quit Codenotch':'退出 Codenotch',
+  'Quit MC-IA':'退出 MC-IA',
   'Connected':'已连接',
   'Not connected':'未连接',
   'These have no ring to place. Switch one on and it joins the end of the list above.':'这些没有圆环可放。打开其中一个，它会接到上面列表的末尾。',
@@ -278,8 +278,8 @@ const ZH_STATIC = {
   'Weekly Limit':'每周额度',
   'Gemini Models':'Gemini 模型',
   'Claude and GPT models':'Claude 和 GPT 模型',
-  'Let Claude Code notify Codenotch':'允许 Claude Code 通知 Codenotch',
-  'Turning this on adds a few lines to your Claude Code settings file so that Claude Code sends Codenotch a short message when a session starts, when it is working, when it is waiting for your answer, and when it finishes. That is what makes the ring spin and the amber ring pulse.':'开启此选项会在你的 Claude Code 设置文件中添加几行代码，以便 Claude Code 在会话开始、处理中、等待你回答以及完成时向 Codenotch 发送简短消息。这就是圆环旋转和琥珀色圆环闪烁的原因。',
+  'Let Claude Code notify MC-IA':'允许 Claude Code 通知 MC-IA',
+  'Turning this on adds a few lines to your Claude Code settings file so that Claude Code sends MC-IA a short message when a session starts, when it is working, when it is waiting for your answer, and when it finishes. That is what makes the ring spin and the amber ring pulse.':'开启此选项会在你的 Claude Code 设置文件中添加几行代码，以便 Claude Code 在会话开始、处理中、等待你回答以及完成时向 MC-IA 发送简短消息。这就是圆环旋转和琥珀色圆环闪烁的原因。',
   'Notch':'刘海',
   'Show':'显示',
   'Always show':'始终显示',
@@ -299,30 +299,30 @@ const ZH_STATIC = {
   'A thinner ring for the weekly limit, drawn inside the main one. It shares the gap with the working indicator.':'一条更细的每周额度圆环，画在主环内侧。和工作指示共用那个空隙。',
   'A thinner ring for the weekly limit, drawn around the main one, in the margin between the ring and the notch edge.':'一条更细的每周额度圆环，画在主环外侧，圆环和刘海边缘之间的空隙里。',
   'The notch stays open with every reading visible.':'刘海保持展开，所有读数都看得见。',
-  'The black pill against the right-hand edge of the screen, with one ring per tool. Turn it off and the pill disappears; Codenotch keeps counting your usage either way.':'屏幕右侧边缘的黑色胶囊，每个工具对应一个圆环。关闭它后胶囊会消失；无论哪种情况，Codenotch 都会继续统计你的使用情况。',
+  'The black pill against the right-hand edge of the screen, with one ring per tool. Turn it off and the pill disappears; MC-IA keeps counting your usage either way.':'屏幕右侧边缘的黑色胶囊，每个工具对应一个圆环。关闭它后胶囊会消失；无论哪种情况，MC-IA 都会继续统计你的使用情况。',
   'Recentre':'重新居中',
   'The pill can be dragged up and down the right-hand edge. If it has ended up somewhere you cannot see it — off the bottom of a screen you have unplugged, say — this drops it back into the middle of the edge.':'可以在右侧边缘上下拖动胶囊。如果它移动到了你看不到的地方（例如，被拔掉的显示器屏幕底部之外），此操作会将其重置回边缘中间。',
   'The notch is back in the middle':'刘海已回到中间',
   'App':'应用',
   'App icon':'应用图标',
   'Neither':'都不显示',
-  'The small icon down by the clock. Right-clicking it opens this window, refreshes the readings, or quits Codenotch.':'时钟旁边的小图标。右键点击它可打开此窗口、刷新读数或退出 Codenotch。',
-  'Held on: the notch is hidden, so this icon is the only way left to reach Codenotch. Switch the notch back on first if you want to hide it.':'强制开启：刘海已被隐藏，因此该图标是访问 Codenotch 的唯一方式。如果你想隐藏此图标，请先重新开启刘海。',
-  'The taskbar icon has been kept on. With the notch hidden it is the only way left to open this window or to quit Codenotch, so Codenotch will not let both of them be switched off at the same time.':'任务栏图标已保持开启。在刘海隐藏的情况下，它是打开此窗口或退出 Codenotch 的唯一方式，因此 Codenotch 不允许同时关闭两者。',
+  'The small icon down by the clock. Right-clicking it opens this window, refreshes the readings, or quits MC-IA.':'时钟旁边的小图标。右键点击它可打开此窗口、刷新读数或退出 MC-IA。',
+  'Held on: the notch is hidden, so this icon is the only way left to reach MC-IA. Switch the notch back on first if you want to hide it.':'强制开启：刘海已被隐藏，因此该图标是访问 MC-IA 的唯一方式。如果你想隐藏此图标，请先重新开启刘海。',
+  'The taskbar icon has been kept on. With the notch hidden it is the only way left to open this window or to quit MC-IA, so MC-IA will not let both of them be switched off at the same time.':'任务栏图标已保持开启。在刘海隐藏的情况下，它是打开此窗口或退出 MC-IA 的唯一方式，因此 MC-IA 不允许同时关闭两者。',
   'Language':'语言',
   'Follow system':'跟随系统',
-  'Sets the language used by Codenotch. “Follow system” uses the language Windows itself is set to.':'设置 Codenotch 使用的语言。“跟随系统”会使用 Windows 系统的默认语言设置。',
-  'Open Codenotch at login':'登录时打开 Codenotch',
-  'Codenotch opens by itself every time you sign in to this computer, and waits quietly in the background until a coding session starts. Turn it off and you have to open Codenotch yourself.':'每次登录此计算机时，Codenotch 都会自动打开，并在后台静默等待，直到编码会话开始。关闭此选项后，你需要手动打开 Codenotch。',
+  'Sets the language used by MC-IA. “Follow system” uses the language Windows itself is set to.':'设置 MC-IA 使用的语言。“跟随系统”会使用 Windows 系统的默认语言设置。',
+  'Open MC-IA at login':'登录时打开 MC-IA',
+  'MC-IA opens by itself every time you sign in to this computer, and waits quietly in the background until a coding session starts. Turn it off and you have to open MC-IA yourself.':'每次登录此计算机时，MC-IA 都会自动打开，并在后台静默等待，直到编码会话开始。关闭此选项后，你需要手动打开 MC-IA。',
   'Version':'版本',
   'Data folder':'数据文件夹',
   'Open folder':'打开文件夹',
-  'Everything Codenotch remembers lives in one folder: your settings, its log file, and the "glyphs" folder where you can drop your own icons. Opens in File Explorer.':'Codenotch 记住的所有内容都保存在一个文件夹中：你的设置、它的日志文件，以及你可以在其中放入自定义图标的“glyphs”文件夹。在文件资源管理器中打开。',
+  'Everything MC-IA remembers lives in one folder: your settings, its log file, and the "glyphs" folder where you can drop your own icons. Opens in File Explorer.':'MC-IA 记住的所有内容都保存在一个文件夹中：你的设置、它的日志文件，以及你可以在其中放入自定义图标的“glyphs”文件夹。在文件资源管理器中打开。',
   'App designed and developed by':'应用设计与开发',
   'Saved':'已保存',
   'System tray':'系统托盘',
   'Close':'关闭',
-  'No icon in the system tray. Open Codenotch again from the Start menu to bring these settings back.':'系统托盘中无图标。请从“开始”菜单再次打开 Codenotch 以恢复这些设置。',
+  'No icon in the system tray. Open MC-IA again from the Start menu to bring these settings back.':'系统托盘中无图标。请从“开始”菜单再次打开 MC-IA 以恢复这些设置。',
   'Model data':'模型数据'
 };
 const JA_STATIC = {
@@ -330,7 +330,7 @@ const JA_STATIC = {
   'Accounts':'アカウント',
   'Appearance':'外観',
   'General':'一般',
-  'Quit Codenotch':'Codenotch を終了',
+  'Quit MC-IA':'MC-IA を終了',
   'Connected':'接続済み',
   'Not connected':'未接続',
   'These have no ring to place. Switch one on and it joins the end of the list above.':'これらには配置するリングがありません。オンにすると、上の一覧の末尾に加わります。',
@@ -342,8 +342,8 @@ const JA_STATIC = {
   'Weekly Limit':'週間の上限',
   'Gemini Models':'Gemini モデル',
   'Claude and GPT models':'Claude と GPT のモデル',
-  'Let Claude Code notify Codenotch':'Claude Code から Codenotch に通知を送信する',
-  'Turning this on adds a few lines to your Claude Code settings file so that Claude Code sends Codenotch a short message when a session starts, when it is working, when it is waiting for your answer, and when it finishes. That is what makes the ring spin and the amber ring pulse.':'これをオンにすると、Claude Code の設定ファイルに数行が追加され、セッションの開始時、処理中、回答の待機中、および終了時に Claude Code が Codenotch に短いメッセージを送信するようになります。これにより、リングが回転したり、琥珀色のリングが点滅したりします。',
+  'Let Claude Code notify MC-IA':'Claude Code から MC-IA に通知を送信する',
+  'Turning this on adds a few lines to your Claude Code settings file so that Claude Code sends MC-IA a short message when a session starts, when it is working, when it is waiting for your answer, and when it finishes. That is what makes the ring spin and the amber ring pulse.':'これをオンにすると、Claude Code の設定ファイルに数行が追加され、セッションの開始時、処理中、回答の待機中、および終了時に Claude Code が MC-IA に短いメッセージを送信するようになります。これにより、リングが回転したり、琥珀色のリングが点滅したりします。',
   'Notch':'ノッチ',
   'Show':'表示',
   'Always show':'常に表示',
@@ -363,30 +363,30 @@ const JA_STATIC = {
   'A thinner ring for the weekly limit, drawn inside the main one. It shares the gap with the working indicator.':'週間の上限を細いリングで主リングの内側に描きます。作業中インジケータと同じ隙間を共有します。',
   'A thinner ring for the weekly limit, drawn around the main one, in the margin between the ring and the notch edge.':'週間の上限を細いリングで主リングの外側、リングとノッチの端の間の余白に描きます。',
   'The notch stays open with every reading visible.':'ノッチは開いたままで、すべての読み取りが見えます。',
-  'The black pill against the right-hand edge of the screen, with one ring per tool. Turn it off and the pill disappears; Codenotch keeps counting your usage either way.':'画面の右端にある黒いピルには、ツールごとに1つのリングが表示されます。オフにするとピルは消えますが、どちらにしても Codenotch は使用量のカウントを続けます。',
+  'The black pill against the right-hand edge of the screen, with one ring per tool. Turn it off and the pill disappears; MC-IA keeps counting your usage either way.':'画面の右端にある黒いピルには、ツールごとに1つのリングが表示されます。オフにするとピルは消えますが、どちらにしても MC-IA は使用量のカウントを続けます。',
   'Recentre':'中央に戻す',
   'The pill can be dragged up and down the right-hand edge. If it has ended up somewhere you cannot see it — off the bottom of a screen you have unplugged, say — this drops it back into the middle of the edge.':'ピルは右端に沿って上下にドラッグできます。もし見えない場所（例えば、取り外した画面の下部など）に行ってしまった場合、これを使うと端の中央に戻せます。',
   'The notch is back in the middle':'ノッチが中央に戻りました',
   'App':'アプリ',
   'App icon':'アプリアイコン',
   'Neither':'どちらにも出さない',
-  'The small icon down by the clock. Right-clicking it opens this window, refreshes the readings, or quits Codenotch.':'時計のそばにある小さなアイコンです。右クリックするとこのウィンドウを開いたり、読み取りを更新したり、Codenotch を終了したりできます。',
-  'Held on: the notch is hidden, so this icon is the only way left to reach Codenotch. Switch the notch back on first if you want to hide it.':'保持オン: ノッチが非表示になっているため、Codenotch にアクセスできるのはこのアイコンだけです。このアイコンを非表示にしたい場合は、先にノッチをオンに戻してください。',
-  'The taskbar icon has been kept on. With the notch hidden it is the only way left to open this window or to quit Codenotch, so Codenotch will not let both of them be switched off at the same time.':'タスクバーアイコンはオンのままです。ノッチが非表示の場合、このウィンドウを開いたり Codenotch を終了したりする唯一の手段となるため、Codenotch は両方を同時にオフにすることを許可しません。',
+  'The small icon down by the clock. Right-clicking it opens this window, refreshes the readings, or quits MC-IA.':'時計のそばにある小さなアイコンです。右クリックするとこのウィンドウを開いたり、読み取りを更新したり、MC-IA を終了したりできます。',
+  'Held on: the notch is hidden, so this icon is the only way left to reach MC-IA. Switch the notch back on first if you want to hide it.':'保持オン: ノッチが非表示になっているため、MC-IA にアクセスできるのはこのアイコンだけです。このアイコンを非表示にしたい場合は、先にノッチをオンに戻してください。',
+  'The taskbar icon has been kept on. With the notch hidden it is the only way left to open this window or to quit MC-IA, so MC-IA will not let both of them be switched off at the same time.':'タスクバーアイコンはオンのままです。ノッチが非表示の場合、このウィンドウを開いたり MC-IA を終了したりする唯一の手段となるため、MC-IA は両方を同時にオフにすることを許可しません。',
   'Language':'言語',
   'Follow system':'システムに従う',
-  'Sets the language used by Codenotch. “Follow system” uses the language Windows itself is set to.':'Codenotch で使用する言語を設定します。「システムに従う」は、Windows 自体に設定されている言語を使用します。',
-  'Open Codenotch at login':'ログイン時に Codenotch を開く',
-  'Codenotch opens by itself every time you sign in to this computer, and waits quietly in the background until a coding session starts. Turn it off and you have to open Codenotch yourself.':'このコンピューターにサインインするたびに Codenotch が自動的に開き、コーディングセッションが始まるまでバックグラウンドで静かに待機します。オフにすると、Codenotch を手動で開く必要があります。',
+  'Sets the language used by MC-IA. “Follow system” uses the language Windows itself is set to.':'MC-IA で使用する言語を設定します。「システムに従う」は、Windows 自体に設定されている言語を使用します。',
+  'Open MC-IA at login':'ログイン時に MC-IA を開く',
+  'MC-IA opens by itself every time you sign in to this computer, and waits quietly in the background until a coding session starts. Turn it off and you have to open MC-IA yourself.':'このコンピューターにサインインするたびに MC-IA が自動的に開き、コーディングセッションが始まるまでバックグラウンドで静かに待機します。オフにすると、MC-IA を手動で開く必要があります。',
   'Version':'バージョン',
   'Data folder':'データフォルダー',
   'Open folder':'フォルダーを開く',
-  'Everything Codenotch remembers lives in one folder: your settings, its log file, and the "glyphs" folder where you can drop your own icons. Opens in File Explorer.':'Codenotch が記憶するすべてのデータは1つのフォルダーに保存されます。設定、ログファイル、そして独自のアイコンをドロップできる「glyphs」フォルダーです。エクスプローラーで開きます。',
+  'Everything MC-IA remembers lives in one folder: your settings, its log file, and the "glyphs" folder where you can drop your own icons. Opens in File Explorer.':'MC-IA が記憶するすべてのデータは1つのフォルダーに保存されます。設定、ログファイル、そして独自のアイコンをドロップできる「glyphs」フォルダーです。エクスプローラーで開きます。',
   'App designed and developed by':'デザインと開発',
   'Saved':'保存しました',
   'System tray':'システムトレイ',
   'Close':'閉じる',
-  'No icon in the system tray. Open Codenotch again from the Start menu to bring these settings back.':'システムトレイにアイコンを表示しません。これらの設定に戻るには、スタートメニューから Codenotch をもう一度開いてください。',
+  'No icon in the system tray. Open MC-IA again from the Start menu to bring these settings back.':'システムトレイにアイコンを表示しません。これらの設定に戻るには、スタートメニューから MC-IA をもう一度開いてください。',
   'Model data':'モデルのデータ'
 };
 const KO_STATIC = {
@@ -394,7 +394,7 @@ const KO_STATIC = {
   'Accounts':'계정',
   'Appearance':'모양',
   'General':'일반',
-  'Quit Codenotch':'Codenotch 종료',
+  'Quit MC-IA':'MC-IA 종료',
   'Connected':'연결됨',
   'Not connected':'연결되지 않음',
   'These have no ring to place. Switch one on and it joins the end of the list above.':'여기에는 배치할 링이 없습니다. 하나를 켜면 위 목록의 끝에 추가됩니다.',
@@ -406,8 +406,8 @@ const KO_STATIC = {
   'Weekly Limit':'주간 제한',
   'Gemini Models':'Gemini 모델',
   'Claude and GPT models':'Claude 및 GPT 모델',
-  'Let Claude Code notify Codenotch':'Claude Code가 Codenotch에 알리도록 허용',
-  'Turning this on adds a few lines to your Claude Code settings file so that Claude Code sends Codenotch a short message when a session starts, when it is working, when it is waiting for your answer, and when it finishes. That is what makes the ring spin and the amber ring pulse.':'이것을 켜면 Claude Code 설정 파일에 몇 줄이 추가되어 세션이 시작될 때, 작업 중일 때, 사용자의 응답을 기다릴 때, 그리고 완료될 때 Claude Code가 Codenotch에 짧은 메시지를 보냅니다. 이것이 링을 회전하게 하고 호박색 링을 깜박이게 하는 원리입니다.',
+  'Let Claude Code notify MC-IA':'Claude Code가 MC-IA에 알리도록 허용',
+  'Turning this on adds a few lines to your Claude Code settings file so that Claude Code sends MC-IA a short message when a session starts, when it is working, when it is waiting for your answer, and when it finishes. That is what makes the ring spin and the amber ring pulse.':'이것을 켜면 Claude Code 설정 파일에 몇 줄이 추가되어 세션이 시작될 때, 작업 중일 때, 사용자의 응답을 기다릴 때, 그리고 완료될 때 Claude Code가 MC-IA에 짧은 메시지를 보냅니다. 이것이 링을 회전하게 하고 호박색 링을 깜박이게 하는 원리입니다.',
   'Notch':'노치',
   'Show':'표시',
   'Always show':'항상 표시',
@@ -427,30 +427,30 @@ const KO_STATIC = {
   'A thinner ring for the weekly limit, drawn inside the main one. It shares the gap with the working indicator.':'주간 제한을 나타내는 더 얇은 링으로, 메인 링 안쪽에 그려집니다. 작동 표시기와 간격을 공유합니다.',
   'A thinner ring for the weekly limit, drawn around the main one, in the margin between the ring and the notch edge.':'주간 제한을 나타내는 더 얇은 링으로, 메인 링 주위에 그려지며 링과 노치 가장자리 사이의 여백에 위치합니다.',
   'The notch stays open with every reading visible.':'노치가 열려 있고 모든 읽기 값이 표시됩니다.',
-  'The black pill against the right-hand edge of the screen, with one ring per tool. Turn it off and the pill disappears; Codenotch keeps counting your usage either way.':'화면 오른쪽 가장자리에 있는 검은색 필로, 도구당 하나의 링이 있습니다. 끄면 필이 사라지지만, 어느 쪽이든 Codenotch는 사용량을 계속 계산합니다.',
+  'The black pill against the right-hand edge of the screen, with one ring per tool. Turn it off and the pill disappears; MC-IA keeps counting your usage either way.':'화면 오른쪽 가장자리에 있는 검은색 필로, 도구당 하나의 링이 있습니다. 끄면 필이 사라지지만, 어느 쪽이든 MC-IA는 사용량을 계속 계산합니다.',
   'Recentre':'가운데로 되돌리기',
   'The pill can be dragged up and down the right-hand edge. If it has ended up somewhere you cannot see it — off the bottom of a screen you have unplugged, say — this drops it back into the middle of the edge.':'필은 오른쪽 가장자리를 따라 위아래로 드래그할 수 있습니다. 만약 보이지 않는 곳(예: 연결 해제된 화면의 하단 밖)으로 이동한 경우, 이것을 사용하면 가장자리 중앙으로 다시 가져옵니다.',
   'The notch is back in the middle':'노치가 중앙으로 돌아왔습니다',
   'App':'앱',
   'App icon':'앱 아이콘',
   'Neither':'표시 안 함',
-  'The small icon down by the clock. Right-clicking it opens this window, refreshes the readings, or quits Codenotch.':'시계 옆에 있는 작은 아이콘입니다. 마우스 오른쪽 버튼을 클릭하면 이 창이 열리거나, 읽기 값을 새로 고치거나, Codenotch를 종료할 수 있습니다.',
-  'Held on: the notch is hidden, so this icon is the only way left to reach Codenotch. Switch the notch back on first if you want to hide it.':'유지됨: 노치가 숨겨져 있으므로 이 아이콘이 Codenotch에 접근할 수 있는 유일한 방법입니다. 이 아이콘을 숨기려면 먼저 노치를 다시 켜십시오.',
-  'The taskbar icon has been kept on. With the notch hidden it is the only way left to open this window or to quit Codenotch, so Codenotch will not let both of them be switched off at the same time.':'작업 표시줄 아이콘이 켜진 상태로 유지되었습니다. 노치가 숨겨진 상태에서는 이 창을 열거나 Codenotch를 종료하는 유일한 방법이므로, Codenotch는 두 가지를 동시에 끄는 것을 허용하지 않습니다.',
+  'The small icon down by the clock. Right-clicking it opens this window, refreshes the readings, or quits MC-IA.':'시계 옆에 있는 작은 아이콘입니다. 마우스 오른쪽 버튼을 클릭하면 이 창이 열리거나, 읽기 값을 새로 고치거나, MC-IA를 종료할 수 있습니다.',
+  'Held on: the notch is hidden, so this icon is the only way left to reach MC-IA. Switch the notch back on first if you want to hide it.':'유지됨: 노치가 숨겨져 있으므로 이 아이콘이 MC-IA에 접근할 수 있는 유일한 방법입니다. 이 아이콘을 숨기려면 먼저 노치를 다시 켜십시오.',
+  'The taskbar icon has been kept on. With the notch hidden it is the only way left to open this window or to quit MC-IA, so MC-IA will not let both of them be switched off at the same time.':'작업 표시줄 아이콘이 켜진 상태로 유지되었습니다. 노치가 숨겨진 상태에서는 이 창을 열거나 MC-IA를 종료하는 유일한 방법이므로, MC-IA는 두 가지를 동시에 끄는 것을 허용하지 않습니다.',
   'Language':'언어',
   'Follow system':'시스템 따르기',
-  'Sets the language used by Codenotch. “Follow system” uses the language Windows itself is set to.':'Codenotch에서 사용할 언어를 설정합니다. "시스템 따르기"는 Windows 자체에 설정된 언어를 사용합니다.',
-  'Open Codenotch at login':'로그인 시 Codenotch 열기',
-  'Codenotch opens by itself every time you sign in to this computer, and waits quietly in the background until a coding session starts. Turn it off and you have to open Codenotch yourself.':'이 컴퓨터에 로그인할 때마다 Codenotch가 자동으로 열리며, 코딩 세션이 시작될 때까지 백그라운드에서 조용히 대기합니다. 이 기능을 끄면 Codenotch를 직접 열어야 합니다.',
+  'Sets the language used by MC-IA. “Follow system” uses the language Windows itself is set to.':'MC-IA에서 사용할 언어를 설정합니다. "시스템 따르기"는 Windows 자체에 설정된 언어를 사용합니다.',
+  'Open MC-IA at login':'로그인 시 MC-IA 열기',
+  'MC-IA opens by itself every time you sign in to this computer, and waits quietly in the background until a coding session starts. Turn it off and you have to open MC-IA yourself.':'이 컴퓨터에 로그인할 때마다 MC-IA가 자동으로 열리며, 코딩 세션이 시작될 때까지 백그라운드에서 조용히 대기합니다. 이 기능을 끄면 MC-IA를 직접 열어야 합니다.',
   'Version':'버전',
   'Data folder':'데이터 폴더',
   'Open folder':'폴더 열기',
-  'Everything Codenotch remembers lives in one folder: your settings, its log file, and the "glyphs" folder where you can drop your own icons. Opens in File Explorer.':'Codenotch가 기억하는 모든 항목은 하나의 폴더에 저장됩니다: 설정, 로그 파일, 그리고 사용자 지정 아이콘을 넣을 수 있는 "glyphs" 폴더가 있습니다. 파일 탐색기에서 열립니다.',
+  'Everything MC-IA remembers lives in one folder: your settings, its log file, and the "glyphs" folder where you can drop your own icons. Opens in File Explorer.':'MC-IA가 기억하는 모든 항목은 하나의 폴더에 저장됩니다: 설정, 로그 파일, 그리고 사용자 지정 아이콘을 넣을 수 있는 "glyphs" 폴더가 있습니다. 파일 탐색기에서 열립니다.',
   'App designed and developed by':'앱 디자인 및 개발',
   'Saved':'저장됨',
   'System tray':'시스템 트레이',
   'Close':'닫기',
-  'No icon in the system tray. Open Codenotch again from the Start menu to bring these settings back.':'시스템 트레이에 아이콘이 없습니다. 이 설정을 다시 가져오려면 시작 메뉴에서 Codenotch를 다시 여세요.',
+  'No icon in the system tray. Open MC-IA again from the Start menu to bring these settings back.':'시스템 트레이에 아이콘이 없습니다. 이 설정을 다시 가져오려면 시작 메뉴에서 MC-IA를 다시 여세요.',
   'Model data':'모델 데이터'
 };
 const STATIC_TEXT = { ru: RU_STATIC, zh: ZH_STATIC, ja: JA_STATIC, ko: KO_STATIC };
@@ -642,7 +642,7 @@ function drawSwitch(el, s){
   el.disabled = s.busy;
 }
 const hooks = remote('get_hooks_installed', 'set_hooks_installed', 'The Claude Code messages', () => renderAccounts());
-const autostart = remote('get_autostart', 'set_autostart', 'Open Codenotch at login', () => drawSwitch(document.getElementById('sw-autostart'), autostart));
+const autostart = remote('get_autostart', 'set_autostart', 'Open MC-IA at login', () => drawSwitch(document.getElementById('sw-autostart'), autostart));
 document.getElementById('sw-autostart').addEventListener('click', () => autostart.toggle());
 
 /* ---- Accounts: which providers get a ring --------------------------------
@@ -653,7 +653,7 @@ let notchSlots = [];
 const AG_LIMITS = [['automatic', 'Automatic'], ['5h', '5-Hour Limit'], ['weekly', 'Weekly Limit']];
 const AG_MODELS = [['gemini', 'Gemini Models'], ['3p', 'Claude and GPT models']];
 let agPrefs = { limit:'automatic', model:'gemini' };
-const HOOKS_WHY = 'Turning this on adds a few lines to your Claude Code settings file so that Claude Code sends Codenotch a short message when a session starts, when it is working, when it is waiting for your answer, and when it finishes. That is what makes the ring spin and the amber ring pulse.';
+const HOOKS_WHY = 'Turning this on adds a few lines to your Claude Code settings file so that Claude Code sends MC-IA a short message when a session starts, when it is working, when it is waiting for your answer, and when it finishes. That is what makes the ring spin and the amber ring pulse.';
 const ONE_STAYS = 'One provider always stays ticked, so the pill is never empty.';
 const NO_RING = 'These have no ring to place. Switch one on and it joins the end of the list above.';
 
@@ -680,9 +680,9 @@ function accountBlock(p, isOn, locked){
       + '<div class="acct-sub"><span>' + esc(ui('Model data', 'Model data')) + '</span>' + agSelect('model', AG_MODELS, agPrefs.model) + '</div>';
   }
   if(p.id === 'claude'){
-    h += '<div class="acct-sub"><span>' + esc(ui('Let Claude Code notify Codenotch', 'Let Claude Code notify Codenotch')) + '</span>'
+    h += '<div class="acct-sub"><span>' + esc(ui('Let Claude Code notify MC-IA', 'Let Claude Code notify MC-IA')) + '</span>'
       + '<button class="switch' + (hooks.value ? ' on' : '') + '" role="switch" aria-checked="' + hooks.value + '" data-remote="hooks"'
-      + (hooks.busy ? ' disabled' : '') + ' aria-label="' + esc(ui('Let Claude Code notify Codenotch', 'Let Claude Code notify Codenotch')) + '"></button></div>'
+      + (hooks.busy ? ' disabled' : '') + ' aria-label="' + esc(ui('Let Claude Code notify MC-IA', 'Let Claude Code notify MC-IA')) + '"></button></div>'
       + '<div class="acct-detail">' + esc(ui(HOOKS_WHY, HOOKS_WHY)) + '</div>';
   }
   return h + '</div>';
@@ -741,11 +741,11 @@ accountsPane.addEventListener('change', e => {
    Two choices, one command. Hiding both would leave nothing to click, so Rust keeps the tray icon
    whenever the notch is hidden, and its answer says what was actually stored. */
 const SHOW_WHY = 'The notch stays open with every reading visible.';
-const HIDE_WHY = 'The black pill against the right-hand edge of the screen, with one ring per tool. Turn it off and the pill disappears; Codenotch keeps counting your usage either way.';
-const TRAY_WHY = 'The small icon down by the clock. Right-clicking it opens this window, refreshes the readings, or quits Codenotch.';
-const NO_TRAY_WHY = 'No icon in the system tray. Open Codenotch again from the Start menu to bring these settings back.';
-const HELD_ON = 'Held on: the notch is hidden, so this icon is the only way left to reach Codenotch. Switch the notch back on first if you want to hide it.';
-const KEPT_ON = 'The taskbar icon has been kept on. With the notch hidden it is the only way left to open this window or to quit Codenotch, so Codenotch will not let both of them be switched off at the same time.';
+const HIDE_WHY = 'The black pill against the right-hand edge of the screen, with one ring per tool. Turn it off and the pill disappears; MC-IA keeps counting your usage either way.';
+const TRAY_WHY = 'The small icon down by the clock. Right-clicking it opens this window, refreshes the readings, or quits MC-IA.';
+const NO_TRAY_WHY = 'No icon in the system tray. Open MC-IA again from the Start menu to bring these settings back.';
+const HELD_ON = 'Held on: the notch is hidden, so this icon is the only way left to reach MC-IA. Switch the notch back on first if you want to hide it.';
+const KEPT_ON = 'The taskbar icon has been kept on. With the notch hidden it is the only way left to open this window or to quit MC-IA, so MC-IA will not let both of them be switched off at the same time.';
 let flags = { notch:true, tray:true }, flagsBusy = false, flagsCorrected = false;
 
 function readFlags(v){
