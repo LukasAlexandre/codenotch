@@ -39,8 +39,10 @@ pub fn start(app: AppHandle, port: u16) {
                 if changed {
                     crate::broadcast(&app);
                 }
+                let _ = req.respond(tiny_http::Response::from_string("ok"));
+            } else {
+                let _ = req.respond(tiny_http::Response::from_string("ok"));
             }
-            let _ = req.respond(tiny_http::Response::from_string("ok"));
         }
     });
 }
@@ -80,6 +82,8 @@ fn parse(url: &str, body: &str) -> HookEvent {
         tool_cmd,
         model: s("model"),
         src: "hook",
+        // Standard Claude Code hook field — the transcript this session is writing to.
+        transcript_path: s("transcript_path"),
     }
 }
 

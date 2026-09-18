@@ -101,9 +101,21 @@
   .g-box{border:1px solid #242424;border-radius:10px;padding:0 10px 8px;margin-top:6px}
   .c-note{font-size:12px;color:#c8c8c8;line-height:1.5;margin-top:6px}
   .c-sessions{margin-top:12px;border-top:1px solid #1e1e1e;padding-top:8px}
+  .c-sessions-title{font-size:12px;font-weight:700;color:#e8e8ea;margin-bottom:4px}
+  .c-sessions-list{max-height:168px;overflow-y:auto;overflow-x:hidden} /* scrolls internally rather than growing the card without bound */
   .s-row{display:flex;align-items:center;gap:6px;font-size:11px;color:#b0b0b3;padding:2px 0}
   .s-dot{width:6px;height:6px;border-radius:3px;flex:0 0 auto}
   .s-more{font-size:11px;color:#808080;padding:2px 0}
+  /* Richer per-session card (T-CLAUDE-USAGE-SESSIONS-01): title row + a compact meta/stat line under it */
+  .s-card{padding:5px 0;border-bottom:1px solid #161616}
+  .s-card:last-child{border-bottom:none}
+  .s-card-head{display:flex;align-items:center;gap:6px;font-size:11px;color:#e8e8ea;font-weight:600}
+  .s-card-title{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+  .s-card-meta{font-size:10px;color:#808080;margin:2px 0 0 12px}
+  .s-card-stats{font-size:10px;color:#8a8a8e;margin:1px 0 0 12px;overflow-wrap:anywhere}
+
+  /* Claude account — compact, always-visible identity summary (distinct from the gear's action panel) */
+  .acc-summary{margin-top:10px;padding-top:10px;border-top:1px solid #1e1e1e}
 
   /* Claude account settings gear + popover (T-CLAUDE-ACCOUNT-SWITCHER) */
   .c-gear{
@@ -529,10 +541,41 @@ function ago(ms){
   return ui().ago(m);
 }
 
+// 81300 -> "81.3k", 1250000 -> "1.3m" — matches how the sessions list keeps per-session token
+// counts readable instead of printing raw integers
+function fmtTok(n){
+  if(n==null) return '';
+  if(n>=1e6) return (n/1e6).toFixed(1)+'m';
+  if(n>=1e3) return (n/1e3).toFixed(1)+'k';
+  return String(n);
+}
+
 const STATE_DOT={running:INK,attention:WATCH,done:AMPLE,idle:TRACK};
-// The card is clipped, not scrolled, so rows past this would push its title off the top; the rest are counted, as on the Mac
-const SESSION_ROWS=5;
+// The session list scrolls internally (.c-sessions-list), so this is a sanity cap on DOM size,
+// not a viewport limit; the rest are counted, as on the Mac
+const SESSION_ROWS=12;
 function moreRow(n){ return n>0?`<div class="s-more">${ui().andMore(n)}</div>`:''; }
+
+// One compact card per active Claude session: name/id always shown (rule: an active session with
+// no further detail still shows name + short id + status); a meta line (model, time active) and a
+// stats line (token counters) are appended only for whatever fields this session actually has —
+// never a placeholder for data we could not get (see the audit: no invented parity, no dollar
+// cost — this app has no verified per-model pricing source, see session_usage.rs on the Rust side).
+function sessionCardHtml(s){
+  let html=`<div class="s-card"><div class="s-card-head"><span class="s-dot" style="background:${STATE_DOT[s.state]||'#666'}"></span><span class="s-card-title">${esc(s.title)}</span></div>`;
+  const meta=[];
+  if(s.model) meta.push(esc(s.model));
+  if(s.started) meta.push(ago(s.started));
+  if(meta.length) html+=`<div class="s-card-meta">${meta.join(' · ')}</div>`;
+  const stats=[];
+  if(s.input_tokens) stats.push('in '+fmtTok(s.input_tokens));
+  if(s.output_tokens) stats.push('out '+fmtTok(s.output_tokens));
+  if(s.cache_write_tokens) stats.push('cache w '+fmtTok(s.cache_write_tokens));
+  if(s.cache_read_tokens) stats.push('cache r '+fmtTok(s.cache_read_tokens));
+  if(stats.length) html+=`<div class="s-card-stats">${stats.join(' · ')}</div>`;
+  html+=`</div>`;
+  return html;
+}
 
 let hoverId='claude';
 function renderCard(){
@@ -571,14 +614,19 @@ function renderCard(){
     if(group) html+=`</div>`;
     if(snap.note) html+=`<div class="c-note">${esc(textCopy(snap.note))}</div>`;
   }
-  if(p.id==='claude'){ // live sessions (a full list with jump-to-session is a follow-up)
+  if(p.id==='claude'){
+    html+=accountSummaryHtml(); // always visible: which account this window is talking to (T-CLAUDE-USAGE-SESSIONS-01)
+    // "Local active sessions", not "Active sessions on this account": these are local Claude Code
+    // processes this machine's hooks/transcript watcher can see, not a set the CLI/API ties to the
+    // signed-in account above — there is no local, deterministic session->account binding (a
+    // session started under one account keeps being listed after `claude auth switch` to another;
+    // nothing here re-derives ownership). Naming it "local" is the honest claim; do not rename this
+    // back to "Active sessions" without first adding a real account/session binding.
     const act=stateSnap.sessions.filter(s=>s.state!=='idle');
     if(act.length){
-      html+=`<div class="c-sessions">`;
-      for(const s of act.slice(0,SESSION_ROWS)){
-        html+=`<div class="s-row"><span class="s-dot" style="background:${STATE_DOT[s.state]||'#666'}"></span>${esc(s.title)}</div>`;
-      }
-      html+=moreRow(act.length-SESSION_ROWS)+`</div>`;
+      html+=`<div class="c-sessions"><div class="c-sessions-title">${textCopy('Local active sessions')}</div><div class="c-sessions-list">`;
+      for(const s of act.slice(0,SESSION_ROWS)) html+=sessionCardHtml(s);
+      html+=moreRow(act.length-SESSION_ROWS)+`</div></div>`;
     }
   }else{ // other providers: detected activity rows (Cursor reports state; Codex/Antigravity are inferred from recent writes)
     // Waiting before busy, newest first within each, so what gets cut is what matters least
@@ -625,18 +673,30 @@ function accNoteLine(note){
     default: return null;
   }
 }
-function accountPanelHtml(){
+// Always visible (no gear click needed): which Claude account this notch is currently reading
+// usage/sessions for. Deliberately separate from accountPanelHtml() below (the gear's popover,
+// actions only now) — one answers "which account", the other is "do something about it" (Fase 6
+// of the audit: the two must read as distinct sections since the user switches between two
+// accounts routinely).
+function accountSummaryHtml(){
   const a=claudeAccount||{};
-  const busy=['switching_account','signing_in','signing_out','refreshing'].includes(a.state);
-  let html=`<div class="acc-panel">`;
+  let html=`<div class="acc-summary">`;
   html+=`<div class="acc-title">Claude Account</div>`;
   html+=`<div class="acc-row"><span class="acc-dot" style="background:${accStateDot(a.state)}"></span>${esc(accStateLine(a.state))}</div>`;
   if(a.state==='connected'){
     if(a.email_masked) html+=`<div class="acc-sub">${esc(a.email_masked)}</div>`;
     if(a.plan) html+=`<div class="acc-sub">${esc(a.plan)}</div>`;
     html+=`<div class="acc-sub">Usage source: ${a.source==='oauth_endpoint'?'OAuth fallback':'Claude CLI'}</div>`;
-    if(a.last_sync_at) html+=`<div class="acc-sub">Last synced ${ago(a.last_sync_at)}</div>`;
   }
+  html+=`</div>`;
+  return html;
+}
+
+function accountPanelHtml(){
+  const a=claudeAccount||{};
+  const busy=['switching_account','signing_in','signing_out','refreshing'].includes(a.state);
+  let html=`<div class="acc-panel">`;
+  if(a.state==='connected'&&a.last_sync_at) html+=`<div class="acc-sub">Last synced ${ago(a.last_sync_at)}</div>`;
   const note=accNoteLine(a.note);
   if(note) html+=`<div class="acc-note">${esc(note)}</div>`;
   html+=`<div class="acc-actions">`;
