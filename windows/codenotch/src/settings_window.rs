@@ -27,7 +27,7 @@ fn open_now(app: &AppHandle) {
     // The Mac's window: 680 × 520, centred, not resizable. `shadow` on an undecorated window is what
     // gives it Windows 11's rounded corners.
     let mut builder = WebviewWindowBuilder::new(app, LABEL, WebviewUrl::App("settings.html".into()))
-        .title("Codenotch Settings")
+        .title("MC-IA Settings")
         .inner_size(680.0, 520.0)
         .resizable(false)
         .maximizable(false)

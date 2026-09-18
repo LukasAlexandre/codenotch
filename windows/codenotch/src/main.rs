@@ -1198,9 +1198,9 @@ fn paint_tray(app: &AppHandle, mode: &str, slots: &[config::TraySlot], values: &
         })
         .collect();
     let tip = if parts.is_empty() {
-        concat!("Codenotch v", env!("CARGO_PKG_VERSION")).to_string()
+        concat!("MC-IA v", env!("CARGO_PKG_VERSION")).to_string()
     } else {
-        format!("Codenotch — {}", parts.join(" · "))
+        format!("MC-IA — {}", parts.join(" · "))
     };
     let _ = tray.set_tooltip(Some(&tip));
 }

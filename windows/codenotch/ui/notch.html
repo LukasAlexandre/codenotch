@@ -51,6 +51,9 @@
   .glyph img.appicon{width:30px;height:30px;border-radius:8px;object-fit:cover}
   .c-head .mark{display:inline-block;width:16px;height:16px;color:#e8e8ea;margin-right:2px}
   .c-head .mark svg{width:16px;height:16px;fill:currentColor}
+  /* Claude's own mark only (brand colour) — every other provider keeps the shared monochrome
+     #e8e8ea above; the usage ring around it stays on its own dynamic colour, untouched. */
+  .cell[data-p="claude"] .mark,.c-head[data-p="claude"] .mark{color:#D97757}
   .pct{font-size:15px;font-weight:600;color:#fff;font-variant-numeric:tabular-nums}
   .dim{opacity:.55}
   /* Session arc animation */
@@ -538,7 +541,7 @@ function renderCard(){
   const snap=p.snap;
   const headIcon=glyphHtml(p,true);
   const gearHtml=p.id==='claude'?`<button type="button" class="c-gear" aria-label="Claude account settings" aria-expanded="${accountPanelOpen}">⚙</button>`:'';
-  let html=`<div class="c-head">${headIcon}<span class="c-title">${ui().title(p.name)}</span>${gearHtml}</div>`;
+  let html=`<div class="c-head" data-p="${p.id}">${headIcon}<span class="c-title">${ui().title(p.name)}</span>${gearHtml}</div>`;
   if(staleOf(snap)&&snap.fetched_at) html+=`<div class="c-sub">${textCopy('Updated')} ${ago(snap.fetched_at)}</div>`;
   if(snap.status==='needsAuth'){
     const who={claude:'Sign in to Claude Code to see usage.',cursor:'Sign in to Cursor to see usage.',codex:'Sign in to Codex to see usage.',gemini:'Sign in to Antigravity to see usage.'}[p.id]||'';
