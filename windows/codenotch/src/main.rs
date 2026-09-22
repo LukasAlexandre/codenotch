@@ -7,6 +7,7 @@ mod focus;
 mod hooks_install;
 mod i18n;
 mod server;
+mod session_usage;
 mod state;
 mod tray;
 mod usage;
@@ -22,6 +23,7 @@ mod watcher;
 mod settings_window;
 mod session_model;
 mod session_git;
+mod claude_account;
 
 use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, Manager};
@@ -45,6 +47,9 @@ pub struct AppState {
     pub glyphs: Mutex<std::collections::HashMap<String, glyphs::Glyph>>,
     /// Working state of the non-Claude providers (Cursor reports it; Codex and Antigravity are inferred from recent writes)
     pub activity: Mutex<Vec<activity::Activity>>,
+    /// Which Claude account `claude auth status` currently reports as active — never the full
+    /// email, never a token; see claude_account.rs.
+    pub claude_account: Mutex<claude_account::ClaudeAccountStatus>,
 }
 
 fn resolved_lang(raw: &str) -> String {
@@ -264,6 +269,200 @@ fn get_activity(state: tauri::State<AppState>) -> Vec<activity::Activity> {
 #[tauri::command]
 fn get_glyphs(state: tauri::State<AppState>) -> std::collections::HashMap<String, glyphs::Glyph> {
     state.glyphs.lock().unwrap().clone()
+}
+
+// ---------------- Claude account (T-CLAUDE-ACCOUNT-SWITCHER) ----------------
+
+fn set_claude_account(app: &AppHandle, status: claude_account::ClaudeAccountStatus) {
+    let st = app.state::<AppState>();
+    *st.claude_account.lock().unwrap() = status.clone();
+    let _ = app.emit("claude_account", &status);
+}
+
+#[tauri::command]
+fn get_claude_account(state: tauri::State<AppState>) -> claude_account::ClaudeAccountStatus {
+    state.claude_account.lock().unwrap().clone()
+}
+
+/// "Sync now" is purely the existing refresh interrupt (usage.rs's own `request_refresh`) — no
+/// separate polling mechanism, per Ajuste/Fase 4: the account check rides the same cycle as
+/// `/usage`, so waking that cycle up early is all "sync now" has to do.
+#[tauri::command]
+fn claude_account_sync_now() {
+    usage::request_refresh();
+}
+
+/// True while a login/logout is already running, so a second click cannot start a second
+/// subprocess on top of it.
+static CLAUDE_ACCOUNT_ACTION_IN_PROGRESS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Starts the official `claude auth login` flow and waits for it off the UI thread. Doubles as
+/// "switch account": there is no separate upstream "switch" operation (see the architecture
+/// report's Fase "Official switch mechanism") — logging in again over an existing session is the
+/// switch. Never touches a token; see claude_account.rs::run_login.
+#[tauri::command]
+fn claude_account_switch(app: AppHandle) {
+    applog("claude account switch: command received");
+    if CLAUDE_ACCOUNT_ACTION_IN_PROGRESS.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        applog("claude account switch: ignored, an action is already in progress");
+        return;
+    }
+    std::thread::spawn(move || {
+        // Root cause of the "Switch account does nothing" bug: this clone used to happen
+        // *inside* the set_claude_account(...) call's own argument list, as
+        // `..app.state::<AppState>().claude_account.lock().unwrap().clone()`. Rust drops a
+        // temporary MutexGuard at the end of the *enclosing statement*, not right after
+        // `.clone()` runs — so that guard was still held while set_claude_account tried to lock
+        // the very same (non-reentrant) Mutex again, self-deadlocking the thread before it ever
+        // reached find_cli(). Binding the clone to its own `let` first drops the guard at the
+        // `;` right after, before set_claude_account is ever called.
+        let prev = app.state::<AppState>().claude_account.lock().unwrap().clone();
+        set_claude_account(
+            &app,
+            claude_account::ClaudeAccountStatus { state: claude_account::ClaudeAccountState::SigningIn, ..prev },
+        );
+        let Some(cli) = usage::find_cli() else {
+            applog("claude account switch: cli found=no");
+            set_claude_account(
+                &app,
+                claude_account::ClaudeAccountStatus {
+                    state: claude_account::ClaudeAccountState::Error,
+                    note: Some("claude_cli_not_found".into()),
+                    ..Default::default()
+                },
+            );
+            CLAUDE_ACCOUNT_ACTION_IN_PROGRESS.store(false, std::sync::atomic::Ordering::SeqCst);
+            return;
+        };
+        applog("claude account switch: cli found=yes");
+        applog("claude auth flow: starting");
+        let timeout = std::time::Duration::from_secs(claude_account::AUTH_LOGIN_TIMEOUT_SECS);
+        let result = claude_account::run_login(&cli, timeout);
+        applog(&format!("claude auth flow: run_login returned {}", match &result {
+            Ok(()) => "ok".to_string(),
+            Err(e) => format!("{e:?}"),
+        }));
+        CLAUDE_ACCOUNT_ACTION_IN_PROGRESS.store(false, std::sync::atomic::Ordering::SeqCst);
+        match result {
+            Ok(()) => {
+                applog("claude auth flow completed");
+                // The next poll cycle (woken immediately) re-reads `auth status` and this
+                // account's `/usage`, replacing this placeholder with the real reading.
+                set_claude_account(
+                    &app,
+                    claude_account::ClaudeAccountStatus {
+                        state: claude_account::ClaudeAccountState::Refreshing,
+                        ..Default::default()
+                    },
+                );
+                usage::request_refresh();
+            }
+            Err(claude_account::AuthActionErr::Timeout) => {
+                applog("claude auth flow did not finish before the timeout");
+                set_claude_account(
+                    &app,
+                    claude_account::ClaudeAccountStatus {
+                        state: claude_account::ClaudeAccountState::ManualActionRequired,
+                        note: Some("login_timed_out".into()),
+                        ..Default::default()
+                    },
+                );
+            }
+            Err(claude_account::AuthActionErr::NotFound) => {
+                set_claude_account(
+                    &app,
+                    claude_account::ClaudeAccountStatus {
+                        state: claude_account::ClaudeAccountState::Error,
+                        note: Some("claude_cli_not_found".into()),
+                        ..Default::default()
+                    },
+                );
+            }
+            Err(claude_account::AuthActionErr::Failed) => {
+                set_claude_account(
+                    &app,
+                    claude_account::ClaudeAccountStatus {
+                        state: claude_account::ClaudeAccountState::Error,
+                        note: Some("login_failed".into()),
+                        ..Default::default()
+                    },
+                );
+            }
+        }
+    });
+    applog("claude auth flow started");
+}
+
+/// Backend for "Sign out". Was gated behind Ajuste 3 (not wired to any UI path) until a
+/// supervised manual `claude auth login`/switch-account run confirmed the shared subprocess
+/// mechanism works correctly end to end — now wired from notch.html's `.acc-signout` button.
+#[tauri::command]
+fn claude_account_sign_out(app: AppHandle) {
+    applog("claude account sign_out: command received");
+    if CLAUDE_ACCOUNT_ACTION_IN_PROGRESS.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        applog("claude account sign_out: ignored, an action is already in progress");
+        return;
+    }
+    std::thread::spawn(move || {
+        set_claude_account(
+            &app,
+            claude_account::ClaudeAccountStatus {
+                state: claude_account::ClaudeAccountState::SigningOut,
+                ..Default::default()
+            },
+        );
+        let Some(cli) = usage::find_cli() else {
+            applog("claude account sign_out: cli found=no");
+            CLAUDE_ACCOUNT_ACTION_IN_PROGRESS.store(false, std::sync::atomic::Ordering::SeqCst);
+            set_claude_account(
+                &app,
+                claude_account::ClaudeAccountStatus {
+                    state: claude_account::ClaudeAccountState::Error,
+                    note: Some("claude_cli_not_found".into()),
+                    ..Default::default()
+                },
+            );
+            return;
+        };
+        applog("claude account sign_out: cli found=yes");
+        let timeout = std::time::Duration::from_secs(claude_account::AUTH_LOGOUT_TIMEOUT_SECS);
+        let result = claude_account::run_logout(&cli, timeout);
+        applog(&format!("claude account sign_out: run_logout returned {}", match &result {
+            Ok(()) => "ok".to_string(),
+            Err(e) => format!("{e:?}"),
+        }));
+        CLAUDE_ACCOUNT_ACTION_IN_PROGRESS.store(false, std::sync::atomic::Ordering::SeqCst);
+        match result {
+            Ok(()) => {
+                applog("claude account: disconnected");
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_millis() as u64)
+                    .unwrap_or(0);
+                set_claude_account(&app, claude_account::ClaudeAccountStatus::not_connected(now));
+                // Usage of the now-signed-out account must not linger on screen.
+                let st = app.state::<AppState>();
+                let snap = {
+                    let mut u = st.usage.lock().unwrap();
+                    u.windows.clear();
+                    u.status = "needsAuth".into();
+                    u.account_fingerprint = None;
+                    u.clone()
+                };
+                let _ = app.emit("usage", &snap);
+            }
+            Err(_) => {
+                set_claude_account(
+                    &app,
+                    claude_account::ClaudeAccountStatus {
+                        state: claude_account::ClaudeAccountState::Error,
+                        note: Some("logout_failed".into()),
+                        ..Default::default()
+                    },
+                );
+            }
+        }
+    });
 }
 
 /// Collects the glyphs again and pushes them to the page (tray refresh, or the user just dropped in an override)
@@ -1002,9 +1201,9 @@ fn paint_tray(app: &AppHandle, mode: &str, slots: &[config::TraySlot], values: &
         })
         .collect();
     let tip = if parts.is_empty() {
-        concat!("Codenotch v", env!("CARGO_PKG_VERSION")).to_string()
+        concat!("MC-IA v", env!("CARGO_PKG_VERSION")).to_string()
     } else {
-        format!("Codenotch — {}", parts.join(" · "))
+        format!("MC-IA — {}", parts.join(" · "))
     };
     let _ = tray.set_tooltip(Some(&tip));
 }
@@ -1150,6 +1349,7 @@ fn main() {
             antigravity: Mutex::new(antigravity::load_persisted()),
             glyphs: Mutex::new(Default::default()),
             activity: Mutex::new(Vec::new()),
+            claude_account: Mutex::new(Default::default()),
         })
         .invoke_handler(tauri::generate_handler![
             get_state,
@@ -1159,6 +1359,10 @@ fn main() {
             get_antigravity,
             get_glyphs,
             get_activity,
+            get_claude_account,
+            claude_account_sync_now,
+            claude_account_switch,
+            claude_account_sign_out,
             open_data_dir,
             drag_begin,
             open_provider_page,
@@ -1405,5 +1609,35 @@ mod tests {
     fn a_request_count_still_leads_when_it_is_all_there_is() {
         let requests = LimitWindow { id: "requests".into(), count: Some(79), ..Default::default() };
         assert_eq!(pick("gemini", std::slice::from_ref(&requests)), Some("requests"));
+    }
+
+    /// Structural smoke test for the Claude Usage popup's new blocks (T-CLAUDE-USAGE-SESSIONS-01).
+    /// This is not a real render test — ui/notch.html is plain embedded JS with no build step and
+    /// no JS test runner exists in this repo (checked: no package.json, no *.test.* file anywhere
+    /// under windows/). Adding one would be a build-tooling change well outside this feature's
+    /// scope, so this only locks in that the markup/functions the backend data model depends on
+    /// are present, catching an accidental deletion — not a substitute for the manual verification
+    /// the audit report calls out as still needed.
+    #[test]
+    fn notch_html_has_the_account_and_sessions_blocks() {
+        let html = include_str!("../ui/notch.html");
+        for marker in [
+            "class=\"acc-summary\"",      // always-visible Claude Account block
+            "function accountSummaryHtml",
+            "class=\"c-sessions-list\"",  // scrollable Local active sessions list
+            "class=\"s-card\"",
+            "function sessionCardHtml",
+            "Local active sessions",
+            "input_tokens",
+            "output_tokens",
+            "cache_write_tokens",
+            "cache_read_tokens",
+        ] {
+            assert!(html.contains(marker), "notch.html is missing expected marker: {marker}");
+        }
+        // Rule 3 of the hardening pass: no dollar cost anywhere in this feature's UI.
+        let lower = html.to_lowercase();
+        assert!(!lower.contains("cost_usd"), "cost_usd must not reappear in notch.html");
+        assert!(!lower.contains("fmtcost"), "fmtCost must not reappear in notch.html");
     }
 }

@@ -51,6 +51,9 @@
   .glyph img.appicon{width:30px;height:30px;border-radius:8px;object-fit:cover}
   .c-head .mark{display:inline-block;width:16px;height:16px;color:#e8e8ea;margin-right:2px}
   .c-head .mark svg{width:16px;height:16px;fill:currentColor}
+  /* Claude's own mark only (brand colour) — every other provider keeps the shared monochrome
+     #e8e8ea above; the usage ring around it stays on its own dynamic colour, untouched. */
+  .cell[data-p="claude"] .mark,.c-head[data-p="claude"] .mark{color:#D97757}
   .pct{font-size:15px;font-weight:600;color:#fff;font-variant-numeric:tabular-nums}
   .dim{opacity:.55}
   /* Session arc animation */
@@ -98,9 +101,47 @@
   .g-box{border:1px solid #242424;border-radius:10px;padding:0 10px 8px;margin-top:6px}
   .c-note{font-size:12px;color:#c8c8c8;line-height:1.5;margin-top:6px}
   .c-sessions{margin-top:12px;border-top:1px solid #1e1e1e;padding-top:8px}
+  .c-sessions-title{font-size:12px;font-weight:700;color:#e8e8ea;margin-bottom:4px}
+  .c-sessions-list{max-height:168px;overflow-y:auto;overflow-x:hidden} /* scrolls internally rather than growing the card without bound */
   .s-row{display:flex;align-items:center;gap:6px;font-size:11px;color:#b0b0b3;padding:2px 0}
   .s-dot{width:6px;height:6px;border-radius:3px;flex:0 0 auto}
   .s-more{font-size:11px;color:#808080;padding:2px 0}
+  /* Richer per-session card (T-CLAUDE-USAGE-SESSIONS-01): title row + a compact meta/stat line under it */
+  .s-card{padding:5px 0;border-bottom:1px solid #161616}
+  .s-card:last-child{border-bottom:none}
+  .s-card-head{display:flex;align-items:center;gap:6px;font-size:11px;color:#e8e8ea;font-weight:600}
+  .s-card-title{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+  .s-card-meta{font-size:10px;color:#808080;margin:2px 0 0 12px}
+  .s-card-stats{font-size:10px;color:#8a8a8e;margin:1px 0 0 12px;overflow-wrap:anywhere}
+
+  /* Claude account — compact, always-visible identity summary (distinct from the gear's action panel) */
+  .acc-summary{margin-top:10px;padding-top:10px;border-top:1px solid #1e1e1e}
+
+  /* Claude account settings gear + popover (T-CLAUDE-ACCOUNT-SWITCHER) */
+  .c-gear{
+    margin-left:auto;width:22px;height:22px;flex:0 0 auto;padding:0;
+    background:transparent;border:none;border-radius:6px;color:#808080;
+    display:flex;align-items:center;justify-content:center;font-size:14px;cursor:pointer;
+  }
+  .c-gear:hover,.c-gear:focus-visible{background:#1e1e1e;color:#e8e8ea}
+  .c-gear:focus-visible{outline:1px solid #4a4a4a;outline-offset:1px}
+  .acc-panel{
+    margin-top:10px;padding-top:10px;border-top:1px solid #1e1e1e;
+  }
+  .acc-title{font-size:12px;font-weight:700;color:#e8e8ea;margin-bottom:6px}
+  .acc-row{display:flex;align-items:center;gap:6px;font-size:12px;color:#e8e8ea;margin-bottom:2px}
+  .acc-dot{width:7px;height:7px;border-radius:4px;flex:0 0 auto}
+  .acc-sub{font-size:11px;color:#808080;margin:2px 0}
+  .acc-note{font-size:11px;color:#c8c8c8;line-height:1.4;margin:6px 0}
+  .acc-actions{display:flex;flex-direction:column;gap:6px;margin-top:8px}
+  .acc-btn{
+    font:inherit;font-size:12px;font-weight:600;color:#e8e8ea;background:#1e1e1e;
+    border:1px solid #2e2e2e;border-radius:8px;padding:6px 10px;cursor:pointer;text-align:center;
+  }
+  .acc-btn:hover{background:#262626}
+  .acc-btn:focus-visible{outline:1px solid #4a4a4a;outline-offset:1px}
+  .acc-btn:disabled{opacity:.4;cursor:default}
+  .acc-btn:disabled:hover{background:#1e1e1e}
 </style>
 </head>
 <body>
@@ -145,6 +186,8 @@ let cursorSnap={status:'absent',windows:[],fetched_at:0,note:''};
 let agSnap={status:'absent',windows:[],fetched_at:0,note:''};
 let glyphs={}; // id → {kind:'mark'|'appicon', url}
 let activity=[]; // working state of the non-Claude providers: {provider,state:'busy'|'waiting',name,detail,since}
+let claudeAccount={state:'refreshing',email_masked:null,plan:null,organization:null,fingerprint:null,identity_strength:'none',last_sync_at:0,source:'claude_cli',note:null};
+let accountPanelOpen=false; // the gear's popover, Claude only — its own open/close state, independent of the hover card
 let uiLang='en';
 // The tray menu already speaks four languages: i18n.rs resolves the user's locale to zh, ja, ko
 // or ru, and main.rs hands the result to this page as `lang_resolved`. The card understood only
@@ -498,10 +541,41 @@ function ago(ms){
   return ui().ago(m);
 }
 
+// 81300 -> "81.3k", 1250000 -> "1.3m" — matches how the sessions list keeps per-session token
+// counts readable instead of printing raw integers
+function fmtTok(n){
+  if(n==null) return '';
+  if(n>=1e6) return (n/1e6).toFixed(1)+'m';
+  if(n>=1e3) return (n/1e3).toFixed(1)+'k';
+  return String(n);
+}
+
 const STATE_DOT={running:INK,attention:WATCH,done:AMPLE,idle:TRACK};
-// The card is clipped, not scrolled, so rows past this would push its title off the top; the rest are counted, as on the Mac
-const SESSION_ROWS=5;
+// The session list scrolls internally (.c-sessions-list), so this is a sanity cap on DOM size,
+// not a viewport limit; the rest are counted, as on the Mac
+const SESSION_ROWS=12;
 function moreRow(n){ return n>0?`<div class="s-more">${ui().andMore(n)}</div>`:''; }
+
+// One compact card per active Claude session: name/id always shown (rule: an active session with
+// no further detail still shows name + short id + status); a meta line (model, time active) and a
+// stats line (token counters) are appended only for whatever fields this session actually has —
+// never a placeholder for data we could not get (see the audit: no invented parity, no dollar
+// cost — this app has no verified per-model pricing source, see session_usage.rs on the Rust side).
+function sessionCardHtml(s){
+  let html=`<div class="s-card"><div class="s-card-head"><span class="s-dot" style="background:${STATE_DOT[s.state]||'#666'}"></span><span class="s-card-title">${esc(s.title)}</span></div>`;
+  const meta=[];
+  if(s.model) meta.push(esc(s.model));
+  if(s.started) meta.push(ago(s.started));
+  if(meta.length) html+=`<div class="s-card-meta">${meta.join(' · ')}</div>`;
+  const stats=[];
+  if(s.input_tokens) stats.push('in '+fmtTok(s.input_tokens));
+  if(s.output_tokens) stats.push('out '+fmtTok(s.output_tokens));
+  if(s.cache_write_tokens) stats.push('cache w '+fmtTok(s.cache_write_tokens));
+  if(s.cache_read_tokens) stats.push('cache r '+fmtTok(s.cache_read_tokens));
+  if(stats.length) html+=`<div class="s-card-stats">${stats.join(' · ')}</div>`;
+  html+=`</div>`;
+  return html;
+}
 
 let hoverId='claude';
 function renderCard(){
@@ -509,7 +583,8 @@ function renderCard(){
   const p=providers().find(x=>x.id===hoverId)||providers()[0];
   const snap=p.snap;
   const headIcon=glyphHtml(p,true);
-  let html=`<div class="c-head">${headIcon}<span class="c-title">${ui().title(p.name)}</span></div>`;
+  const gearHtml=p.id==='claude'?`<button type="button" class="c-gear" aria-label="Claude account settings" aria-expanded="${accountPanelOpen}">⚙</button>`:'';
+  let html=`<div class="c-head" data-p="${p.id}">${headIcon}<span class="c-title">${ui().title(p.name)}</span>${gearHtml}</div>`;
   if(staleOf(snap)&&snap.fetched_at) html+=`<div class="c-sub">${textCopy('Updated')} ${ago(snap.fetched_at)}</div>`;
   if(snap.status==='needsAuth'){
     const who={claude:'Sign in to Claude Code to see usage.',cursor:'Sign in to Cursor to see usage.',codex:'Sign in to Codex to see usage.',gemini:'Sign in to Antigravity to see usage.'}[p.id]||'';
@@ -539,14 +614,19 @@ function renderCard(){
     if(group) html+=`</div>`;
     if(snap.note) html+=`<div class="c-note">${esc(textCopy(snap.note))}</div>`;
   }
-  if(p.id==='claude'){ // live sessions (a full list with jump-to-session is a follow-up)
+  if(p.id==='claude'){
+    html+=accountSummaryHtml(); // always visible: which account this window is talking to (T-CLAUDE-USAGE-SESSIONS-01)
+    // "Local active sessions", not "Active sessions on this account": these are local Claude Code
+    // processes this machine's hooks/transcript watcher can see, not a set the CLI/API ties to the
+    // signed-in account above — there is no local, deterministic session->account binding (a
+    // session started under one account keeps being listed after `claude auth switch` to another;
+    // nothing here re-derives ownership). Naming it "local" is the honest claim; do not rename this
+    // back to "Active sessions" without first adding a real account/session binding.
     const act=stateSnap.sessions.filter(s=>s.state!=='idle');
     if(act.length){
-      html+=`<div class="c-sessions">`;
-      for(const s of act.slice(0,SESSION_ROWS)){
-        html+=`<div class="s-row"><span class="s-dot" style="background:${STATE_DOT[s.state]||'#666'}"></span>${esc(s.title)}</div>`;
-      }
-      html+=moreRow(act.length-SESSION_ROWS)+`</div>`;
+      html+=`<div class="c-sessions"><div class="c-sessions-title">${textCopy('Local active sessions')}</div><div class="c-sessions-list">`;
+      for(const s of act.slice(0,SESSION_ROWS)) html+=sessionCardHtml(s);
+      html+=moreRow(act.length-SESSION_ROWS)+`</div></div>`;
     }
   }else{ // other providers: detected activity rows (Cursor reports state; Codex/Antigravity are inferred from recent writes)
     // Waiting before busy, newest first within each, so what gets cut is what matters least
@@ -560,8 +640,79 @@ function renderCard(){
       html+=moreRow(acts.length-SESSION_ROWS)+`</div>`;
     }
   }
+  if(p.id==='claude'&&accountPanelOpen) html+=accountPanelHtml();
   c.innerHTML=html;
   placeCard();
+}
+
+const ACC_STATE_DOT={connected:AMPLE,not_connected:'#666',error:'#e5484d'};
+// Everything else (switching_account/signing_in/signing_out/refreshing/manual_action_required)
+// reads as "in progress", not a hard state colour — WATCH (the same amber the working-indicator
+// arc already uses) rather than inventing a second meaning for it.
+function accStateDot(s){return ACC_STATE_DOT[s]||WATCH;}
+function accStateLine(s){
+  switch(s){
+    case 'connected': return 'Connected';
+    case 'not_connected': return 'Not connected';
+    case 'switching_account': return 'Switching account…';
+    case 'signing_in': return 'Waiting for Claude authentication…';
+    case 'signing_out': return 'Signing out…';
+    case 'refreshing': return 'Refreshing…';
+    case 'manual_action_required': return 'Manual action required';
+    case 'error': return 'Something went wrong';
+    default: return s;
+  }
+}
+// A fixed, internal note code (never a raw error string, never a credential) -> one safe sentence.
+function accNoteLine(note){
+  switch(note){
+    case 'login_timed_out': return "Login wasn't completed automatically. Finish it from the Claude CLI, then click Sync now.";
+    case 'claude_cli_not_found': return 'The claude CLI was not found on this machine.';
+    case 'login_failed': return 'The login attempt did not complete.';
+    case 'logout_failed': return 'The sign-out attempt did not complete.';
+    default: return null;
+  }
+}
+// Always visible (no gear click needed): which Claude account this notch is currently reading
+// usage/sessions for. Deliberately separate from accountPanelHtml() below (the gear's popover,
+// actions only now) — one answers "which account", the other is "do something about it" (Fase 6
+// of the audit: the two must read as distinct sections since the user switches between two
+// accounts routinely).
+function accountSummaryHtml(){
+  const a=claudeAccount||{};
+  let html=`<div class="acc-summary">`;
+  html+=`<div class="acc-title">Claude Account</div>`;
+  html+=`<div class="acc-row"><span class="acc-dot" style="background:${accStateDot(a.state)}"></span>${esc(accStateLine(a.state))}</div>`;
+  if(a.state==='connected'){
+    if(a.email_masked) html+=`<div class="acc-sub">${esc(a.email_masked)}</div>`;
+    if(a.plan) html+=`<div class="acc-sub">${esc(a.plan)}</div>`;
+    html+=`<div class="acc-sub">Usage source: ${a.source==='oauth_endpoint'?'OAuth fallback':'Claude CLI'}</div>`;
+  }
+  html+=`</div>`;
+  return html;
+}
+
+function accountPanelHtml(){
+  const a=claudeAccount||{};
+  const busy=['switching_account','signing_in','signing_out','refreshing'].includes(a.state);
+  let html=`<div class="acc-panel">`;
+  if(a.state==='connected'&&a.last_sync_at) html+=`<div class="acc-sub">Last synced ${ago(a.last_sync_at)}</div>`;
+  const note=accNoteLine(a.note);
+  if(note) html+=`<div class="acc-note">${esc(note)}</div>`;
+  html+=`<div class="acc-actions">`;
+  if(a.state==='not_connected'){
+    html+=`<button type="button" class="acc-btn acc-switch">Sign in</button>`;
+  }else{
+    html+=`<button type="button" class="acc-btn acc-sync" ${busy?'disabled':''}>Sync now</button>`;
+    html+=`<button type="button" class="acc-btn acc-switch" ${busy?'disabled':''}>Switch account</button>`;
+    // Sign out: backend (claude_account_sign_out) verified against fake fixtures in tests, and
+    // now enabled after a live, human-supervised run_login smoke confirmed the same
+    // set_claude_account call shape (Switch account's deadlock fix applies equally here — signOut
+    // never used the deadlocking pattern to begin with, see main.rs).
+    html+=`<button type="button" class="acc-btn acc-signout" ${busy?'disabled':''}>Sign out</button>`;
+  }
+  html+=`</div></div>`;
+  return html;
 }
 // The card follows the hovered cell: vertically centred on it (kept inside the window), tail pointing at it
 function placeCard(){
@@ -662,6 +813,25 @@ listen('pointer_left',()=>{clearTimeout(hideTimer);hideCard();}).catch(()=>{});
 // Card content changes change its height -> report the hot rectangles again
 listen('usage',()=>{if(card.classList.contains('show'))armWatchdog();}).catch(()=>{});
 listen('state',()=>{if(card.classList.contains('show'))armWatchdog();}).catch(()=>{});
+
+// Claude account settings: gear opens/closes a popover inside the card (T-CLAUDE-ACCOUNT-SWITCHER).
+// Delegated on #card, since renderCard() replaces the gear/popover DOM on every re-render.
+card.addEventListener('click',e=>{
+  if(e.target.closest('.c-gear')){ accountPanelOpen=!accountPanelOpen; renderCard(); armWatchdog(); return; }
+  if(e.target.closest('.acc-sync')){ invoke('claude_account_sync_now').catch(()=>{}); return; }
+  if(e.target.closest('.acc-switch')){ jslog('switch button clicked'); invoke('claude_account_switch').then(()=>jslog('switch invoke resolved')).catch(err=>jslog('switch invoke rejected: '+err)); return; }
+  if(e.target.closest('.acc-signout')){ jslog('sign out button clicked'); invoke('claude_account_sign_out').catch(err=>jslog('sign out invoke rejected: '+err)); return; }
+});
+document.addEventListener('keydown',e=>{
+  if(accountPanelOpen&&e.key==='Escape'){ accountPanelOpen=false; renderCard(); armWatchdog(); }
+});
+document.addEventListener('click',e=>{
+  if(!accountPanelOpen) return;
+  if(e.target.closest && (e.target.closest('.acc-panel')||e.target.closest('.c-gear'))) return;
+  accountPanelOpen=false; renderCard(); armWatchdog();
+});
+listen('claude_account',e=>{claudeAccount=e.payload||claudeAccount;if(card.classList.contains('show'))renderCard();}).catch(()=>{});
+invoke('get_claude_account').then(a=>{claudeAccount=a||claudeAccount;}).catch(()=>{});
 /* The pill can be dragged up and down the right edge. Press and move more than 4 px = drag (handed to Rust,
    which follows the system cursor; the card is collapsed first); release without moving = click (opens the provider's usage page). */
 let press=null, dragging=false;

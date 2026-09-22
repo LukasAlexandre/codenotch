@@ -55,6 +55,9 @@ enum Kind {
 struct Trk {
     session: String,
     cwd: String,
+    /// The transcript file itself — this IS the session's transcript_path (the watcher tails it
+    /// directly; unlike server.rs, it never gets this from a hook's stdin JSON).
+    path: PathBuf,
     last_append: u64,
     kind: Kind,
     sent: &'static str, // last state pushed, to avoid repeats
@@ -364,6 +367,7 @@ fn ingest(app: &AppHandle, tracks: &mut HashMap<PathBuf, Trk>, path: &Path) {
     let t = tracks.entry(path.to_path_buf()).or_insert(Trk {
         session: session.clone(),
         cwd: cwd.clone(),
+        path: path.to_path_buf(),
         last_append: 0,
         kind,
         sent: "",
@@ -490,6 +494,7 @@ fn push(app: &AppHandle, e: &str, t: &Trk) {
         tool_cmd: String::new(),
         model: t.model.clone(),
         src: "watch",
+        transcript_path: t.path.to_string_lossy().into_owned(),
     };
     let changed = {
         let st = app.state::<AppState>();

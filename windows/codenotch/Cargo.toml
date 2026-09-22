@@ -21,6 +21,8 @@ ureq = { version = "2", features = ["json", "native-tls"] } # native-tls: the An
 native-tls = "0.2"
 png = "0.17" # application icon → PNG (provider marks taken from the installed app's resources)
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
+# Local-only account fingerprint (normalized email + org id -> sha256), never used for auth
+sha2 = "0.10"
 # Cursor's credential lives in state.vscdb (SQLite); bundled = compile the SQLite C sources with the crate, which adds 1–2 minutes to the first build
 rusqlite = { version = "0.32", features = ["bundled"] }
 
